@@ -135,8 +135,9 @@ app.get('/api/products', async (req, res) => {
     try {
         let sql = `
             SELECT p.*, 
-                   COALESCE(bp.price, p.price) as price, 
-                   COALESCE(bp.stock_quantity, p.stock) as stock_quantity, 
+                   COALESCE(bp.price, 0) as price,
+                   bp.discount_price,
+                   COALESCE(bp.stock_quantity, 0) as stock_quantity,
                    COALESCE(bp.is_available, true) as is_available
             FROM products p
             LEFT JOIN branch_products bp ON p.id = bp.product_id
@@ -161,22 +162,22 @@ app.get('/api/products', async (req, res) => {
             params.push(`%${search}%`);
         }
         if (minPrice) {
-            conditions.push(`COALESCE(bp.price, p.price) >= $${params.length + 1}`);
+            conditions.push(`COALESCE(bp.price, 0) >= $${params.length + 1}`);
             params.push(parseFloat(minPrice));
         }
         if (maxPrice) {
-            conditions.push(`COALESCE(bp.price, p.price) <= $${params.length + 1}`);
+            conditions.push(`COALESCE(bp.price, 0) <= $${params.length + 1}`);
             params.push(parseFloat(maxPrice));
         }
         if (onSale === 'true') {
-            conditions.push(`p.discount > 0`);
+            conditions.push(`bp.discount_price IS NOT NULL`);
         }
 
         if (conditions.length > 0) {
             sql += ' WHERE ' + conditions.join(' AND ');
         }
 
-        sql += ' ORDER BY p.created_at DESC';
+        sql += ' ORDER BY p.name ASC';
         if (limit) sql += ` LIMIT ${parseInt(limit)}`;
 
         const { rows } = await query(sql, params);
@@ -191,7 +192,7 @@ app.get('/api/products', async (req, res) => {
 app.get('/api/products/:id', async (req, res) => {
     try {
         const { rows } = await query(
-            `SELECT p.*, COALESCE(bp.price, p.price) as price, COALESCE(bp.stock_quantity, p.stock) as stock_quantity 
+            `SELECT p.*, COALESCE(bp.price, 0) as price, bp.discount_price, COALESCE(bp.stock_quantity, 0) as stock_quantity 
              FROM products p 
              LEFT JOIN branch_products bp ON p.id = bp.product_id 
              WHERE p.id = $1`,
@@ -395,9 +396,14 @@ app.delete('/api/favorites/:productId', verifyToken, async (req, res) => {
 app.get('/api/cart/:userId', verifyToken, async (req, res) => {
     try {
         const { rows } = await query(
-            `SELECT c.*, p.name, p.price, p.image, p.discount
+            `SELECT c.*, p.name, p.image,
+                    COALESCE(bp.price, 0) as price,
+                    bp.discount_price,
+                    COALESCE(bp.stock_quantity, 0) as stock_quantity,
+                    COALESCE(bp.is_available, true) as is_available
              FROM cart c
              JOIN products p ON c.product_id = p.id
+             LEFT JOIN branch_products bp ON p.id = bp.product_id
              WHERE c.user_id = $1`,
             [req.params.userId]
         );
