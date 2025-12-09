@@ -219,29 +219,53 @@ app.get('/api/products', async (req, res) => {
 // Get product by ID
 app.get('/api/products/:id', async (req, res) => {
     try {
-        const { rows } = await query(
-            `SELECT 
-                product_id as id,
-                name,
-                category,
-                subcategory,
-                image,
-                price,
-                stock_quantity,
-                is_available,
-                NULL as description,
-                4.5 as rating,
-                0 as reviews
-             FROM branch_products 
-             WHERE product_id = $1
-             LIMIT 1`,
-            [req.params.id]
-        );
-        if (!rows[0]) return res.status(404).json({ error: 'Product not found' });
+        const { branchId } = req.query;
+        const productId = req.params.id;
+        
+        let sql = `
+            SELECT 
+                bp.product_id as id,
+                bp.name,
+                bp.category,
+                bp.subcategory,
+                bp.image,
+                bp.price,
+                bp.stock_quantity,
+                bp.is_available,
+                p.description,
+                COALESCE(p.rating, 4.5) as rating,
+                COALESCE(p.reviews, 0) as reviews,
+                p.barcode,
+                p.weight,
+                p.is_new
+            FROM branch_products bp
+            LEFT JOIN products p ON bp.product_id = p.id
+            WHERE bp.product_id = $1
+        `;
+        
+        const params = [productId];
+        
+        // If branchId specified, get product from that branch
+        if (branchId) {
+            sql += ` AND bp.branch_id = $2`;
+            params.push(parseInt(branchId));
+        } else {
+            // Otherwise, get from first available branch
+            sql += ` ORDER BY bp.branch_id ASC`;
+        }
+        
+        sql += ` LIMIT 1`;
+        
+        const { rows } = await query(sql, params);
+        
+        if (!rows[0]) {
+            return res.status(404).json({ error: 'Product not found' });
+        }
+        
         res.json(rows[0]);
     } catch (err) {
         console.error('Get product error:', err);
-        res.status(500).json({ error: 'Failed to fetch product' });
+        res.status(500).json({ error: 'Failed to fetch product', details: err.message });
     }
 });
 
