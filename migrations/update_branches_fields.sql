@@ -19,22 +19,42 @@ ALTER TABLE branches ADD COLUMN IF NOT EXISTS address TEXT;
 -- Rename location columns to match the code
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'location_lat') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'location_lat') 
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'latitude') THEN
         ALTER TABLE branches RENAME COLUMN location_lat TO latitude;
+    ELSIF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'latitude') THEN
+        ALTER TABLE branches ADD COLUMN latitude DOUBLE PRECISION;
     END IF;
     
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'location_lng') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'location_lng') 
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'longitude') THEN
         ALTER TABLE branches RENAME COLUMN location_lng TO longitude;
+    ELSIF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'longitude') THEN
+        ALTER TABLE branches ADD COLUMN longitude DOUBLE PRECISION;
     END IF;
     
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'coverage_radius_km') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'coverage_radius_km') 
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'delivery_radius') THEN
         ALTER TABLE branches RENAME COLUMN coverage_radius_km TO delivery_radius;
+    ELSIF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'delivery_radius') THEN
+        ALTER TABLE branches ADD COLUMN delivery_radius DOUBLE PRECISION DEFAULT 10;
     END IF;
 END $$;
 
 -- Make latitude and longitude nullable since they're optional
-ALTER TABLE branches ALTER COLUMN latitude DROP NOT NULL;
-ALTER TABLE branches ALTER COLUMN longitude DROP NOT NULL;
+DO $$
+BEGIN
+    ALTER TABLE branches ALTER COLUMN latitude DROP NOT NULL;
+EXCEPTION
+    WHEN OTHERS THEN NULL; -- Ignore if column doesn't have NOT NULL constraint
+END $$;
+
+DO $$
+BEGIN
+    ALTER TABLE branches ALTER COLUMN longitude DROP NOT NULL;
+EXCEPTION
+    WHEN OTHERS THEN NULL; -- Ignore if column doesn't have NOT NULL constraint
+END $$;
 
 -- Add index for active branches
 CREATE INDEX IF NOT EXISTS idx_branches_active ON branches(is_active);
