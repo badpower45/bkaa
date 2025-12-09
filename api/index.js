@@ -271,6 +271,40 @@ app.get('/api/products/:id', async (req, res) => {
 
 // ===================== ORDERS ROUTES =====================
 
+// Get all orders with userId query param
+app.get('/api/orders', verifyToken, async (req, res) => {
+    const { userId } = req.query;
+    
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+    
+    try {
+        const { rows } = await query(
+            `SELECT o.*, 
+                    json_agg(json_build_object(
+                        'id', oi.id, 
+                        'product_id', oi.product_id, 
+                        'quantity', oi.quantity, 
+                        'price', oi.price,
+                        'product_name', p.name,
+                        'product_image', p.image
+                    )) as items
+             FROM orders o
+             LEFT JOIN order_items oi ON o.id = oi.order_id
+             LEFT JOIN products p ON oi.product_id::text = p.id::text
+             WHERE o.user_id = $1
+             GROUP BY o.id
+             ORDER BY o.created_at DESC`,
+            [userId]
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error('Orders error:', err);
+        res.status(500).json({ error: 'Failed to fetch orders' });
+    }
+});
+
 // Create order
 app.post('/api/orders', async (req, res) => {
     const { userId, total, items, branchId, shippingDetails, paymentMethod } = req.body;
@@ -466,6 +500,51 @@ app.delete('/api/favorites/:productId', verifyToken, async (req, res) => {
 
 // ===================== CART =====================
 
+// Get cart with branchId support
+app.get('/api/cart', verifyToken, async (req, res) => {
+    const userId = req.userId;
+    const branchId = req.query.branchId || 1;
+    
+    try {
+        const { rows } = await query(
+            `SELECT c.id as cart_id, c.quantity, c.substitution_preference,
+                    p.id, p.name, p.image, p.category, p.description, p.weight, p.barcode,
+                    COALESCE(bp.price, 0) as price,
+                    bp.discount_price,
+                    bp.stock_quantity,
+                    bp.is_available
+             FROM cart c
+             JOIN products p ON c.product_id::text = p.id::text
+             LEFT JOIN branch_products bp ON p.id::text = bp.product_id::text AND bp.branch_id = $2
+             WHERE c.user_id = $1`,
+            [userId, branchId]
+        );
+        
+        const items = rows.map(row => ({
+            id: row.id,
+            cartId: row.cart_id,
+            name: row.name,
+            image: row.image,
+            price: Number(row.price) || 0,
+            discountPrice: row.discount_price ? Number(row.discount_price) : null,
+            quantity: row.quantity,
+            substitutionPreference: row.substitution_preference || 'none',
+            category: row.category,
+            description: row.description,
+            weight: row.weight,
+            barcode: row.barcode,
+            stockQuantity: row.stock_quantity,
+            isAvailable: row.is_available
+        }));
+        
+        res.json({ message: 'success', data: items });
+    } catch (err) {
+        console.error('Cart fetch error:', err);
+        res.status(500).json({ error: 'Failed to fetch cart' });
+    }
+});
+
+// Old endpoint for backward compatibility
 app.get('/api/cart/:userId', verifyToken, async (req, res) => {
     try {
         const { rows } = await query(
@@ -483,6 +562,39 @@ app.get('/api/cart/:userId', verifyToken, async (req, res) => {
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch cart' });
+    }
+});
+
+// Add to cart
+app.post('/api/cart/add', verifyToken, async (req, res) => {
+    const { productId, quantity, substitutionPreference } = req.body;
+    try {
+        await query(
+            `INSERT INTO cart (user_id, product_id, quantity, substitution_preference) 
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (user_id, product_id) 
+             DO UPDATE SET quantity = cart.quantity + $3, substitution_preference = $4`,
+            [req.userId, productId, quantity || 1, substitutionPreference || 'none']
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Add to cart error:', err);
+        res.status(500).json({ error: 'Failed to add to cart' });
+    }
+});
+
+// Update cart item
+app.post('/api/cart/update', verifyToken, async (req, res) => {
+    const { productId, quantity, substitutionPreference } = req.body;
+    try {
+        await query(
+            'UPDATE cart SET quantity = $1, substitution_preference = COALESCE($2, substitution_preference) WHERE user_id = $3 AND product_id = $4',
+            [quantity, substitutionPreference, req.userId, productId]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Update cart error:', err);
+        res.status(500).json({ error: 'Failed to update cart' });
     }
 });
 
@@ -827,6 +939,135 @@ app.get('/api/admin/stories', verifyToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch stories' });
     }
 });
+
+// ===================== BRANCH PRODUCTS =====================
+
+// Get products for a specific branch
+app.get('/api/branch-products/:branchId', async (req, res) => {
+    const { branchId } = req.params;
+    const { category, available } = req.query;
+
+    try {
+        let sql = `
+            SELECT p.*, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
+            FROM products p
+            JOIN branch_products bp ON p.id::text = bp.product_id::text
+            WHERE bp.branch_id = $1
+        `;
+        const params = [branchId];
+        let paramIndex = 2;
+
+        if (category) {
+            sql += ` AND p.category = $${paramIndex}`;
+            params.push(category);
+            paramIndex++;
+        }
+
+        if (available === 'true') {
+            sql += ` AND bp.is_available = TRUE`;
+        }
+
+        sql += ' ORDER BY p.name';
+
+        const { rows } = await query(sql, params);
+        res.json({ message: 'success', data: rows });
+    } catch (err) {
+        console.error('Branch products error:', err);
+        res.status(500).json({ error: 'Failed to fetch branch products' });
+    }
+});
+
+// ===================== DELIVERY FEES =====================
+
+// Calculate delivery fees
+app.post('/api/delivery-fees/calculate', async (req, res) => {
+    const { branchId, subtotal, customerLat, customerLng } = req.body;
+
+    if (!branchId || !subtotal) {
+        return res.status(400).json({ error: 'Branch ID and subtotal are required' });
+    }
+
+    try {
+        // جلب إعدادات رسوم التوصيل للفرع
+        const { rows: feeRows } = await query(
+            `SELECT * FROM delivery_fees WHERE branch_id = $1 AND is_active = TRUE LIMIT 1`,
+            [branchId]
+        );
+
+        if (feeRows.length === 0) {
+            // إذا لم توجد إعدادات، استخدم القيم الافتراضية
+            return res.json({
+                deliveryFee: 20,
+                freeDelivery: false,
+                minOrder: 0,
+                canDeliver: true
+            });
+        }
+
+        const fee = feeRows[0];
+
+        // Check if free delivery applies
+        if (subtotal >= fee.free_delivery_threshold) {
+            return res.json({
+                deliveryFee: 0,
+                freeDelivery: true,
+                minOrder: fee.min_order,
+                canDeliver: true
+            });
+        }
+
+        // Calculate distance-based fees if coordinates provided
+        let totalFee = fee.base_fee;
+        
+        if (customerLat && customerLng && fee.per_km_fee > 0) {
+            // جلب موقع الفرع
+            const { rows: branchRows } = await query(
+                'SELECT latitude, longitude FROM branches WHERE id = $1',
+                [branchId]
+            );
+            
+            if (branchRows[0] && branchRows[0].latitude && branchRows[0].longitude) {
+                const distance = calculateDistance(
+                    branchRows[0].latitude,
+                    branchRows[0].longitude,
+                    customerLat,
+                    customerLng
+                );
+                
+                totalFee += distance * fee.per_km_fee;
+            }
+        }
+
+        res.json({
+            deliveryFee: Math.round(totalFee * 100) / 100,
+            freeDelivery: false,
+            minOrder: fee.min_order,
+            canDeliver: true,
+            message: null
+        });
+
+    } catch (err) {
+        console.error('Error calculating delivery fee:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Calculate distance between two points (Haversine formula)
+function calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371; // Radius of Earth in kilometers
+    const dLat = deg2rad(lat2 - lat1);
+    const dLon = deg2rad(lon2 - lon1);
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
+function deg2rad(deg) {
+    return deg * (Math.PI / 180);
+}
 
 // ===================== FACEBOOK REELS =====================
 
