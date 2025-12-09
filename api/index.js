@@ -565,21 +565,39 @@ app.get('/api/cart/:userId', verifyToken, async (req, res) => {
     }
 });
 
-// Add to cart
-app.post('/api/cart/add', verifyToken, async (req, res) => {
-    const { productId, quantity, substitutionPreference } = req.body;
+// Add to cart (supports both logged in and guest users)
+app.post('/api/cart/add', async (req, res) => {
+    const { productId, quantity, substitutionPreference, userId } = req.body;
+    
+    // Get userId from token if available, otherwise use provided userId (for guests)
+    const token = req.headers['authorization']?.split(' ')[1];
+    let effectiveUserId = userId;
+    
+    if (token) {
+        try {
+            const decoded = jwt.verify(token, JWT_SECRET);
+            effectiveUserId = decoded.id;
+        } catch (err) {
+            // Token invalid, use provided userId
+        }
+    }
+    
+    if (!effectiveUserId) {
+        return res.status(400).json({ error: 'User ID is required' });
+    }
+    
     try {
         await query(
             `INSERT INTO cart (user_id, product_id, quantity, substitution_preference) 
              VALUES ($1, $2, $3, $4)
              ON CONFLICT (user_id, product_id) 
              DO UPDATE SET quantity = cart.quantity + $3, substitution_preference = $4`,
-            [req.userId, productId, quantity || 1, substitutionPreference || 'none']
+            [effectiveUserId, productId, quantity || 1, substitutionPreference || 'none']
         );
         res.json({ success: true });
     } catch (err) {
         console.error('Add to cart error:', err);
-        res.status(500).json({ error: 'Failed to add to cart' });
+        res.status(500).json({ error: 'Failed to add to cart', details: err.message });
     }
 });
 
