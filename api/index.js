@@ -141,81 +141,91 @@ app.get('/api/products', async (req, res) => {
             // Get products from branch_products table for specific branch
             sql = `
                 SELECT 
-                    bp.product_id as id,
-                    bp.name,
-                    p.description,
-                    bp.category,
-                    bp.subcategory,
-                    p.rating,
-                    p.reviews,
-                    bp.image,
-                    p.is_organic,
-                    p.weight,
-                    p.is_new,
-                    p.barcode,
-                    p.brand,
-                    p.shelf_location,
-                    p.created_at,
-                    bp.price,
-                    NULL as discount_price,
-                    bp.stock_quantity,
-                    bp.is_available
-                FROM branch_products bp
-                LEFT JOIN products p ON bp.product_id = p.id
-                WHERE bp.branch_id = $1
+                    product_id as id,
+                    name,
+                    category,
+                    subcategory,
+                    image,
+                    price,
+                    stock_quantity,
+                    is_available,
+                    NULL as description,
+                    4.5 as rating,
+                    0 as reviews,
+                    false as is_organic,
+                    '' as weight,
+                    false as is_new,
+                    '' as barcode,
+                    '' as brand,
+                    '' as shelf_location,
+                    NOW() as created_at,
+                    NULL as discount_price
+                FROM branch_products
+                WHERE branch_id = $1
             `;
             params.push(branchId);
             
             if (category) {
-                conditions.push(`bp.category = $${params.length + 1}`);
+                conditions.push(`category = $${params.length + 1}`);
                 params.push(category);
             }
             if (search) {
-                conditions.push(`(bp.name ILIKE $${params.length + 1} OR p.description ILIKE $${params.length + 1})`);
+                conditions.push(`(name ILIKE $${params.length + 1})`);
                 params.push(`%${search}%`);
             }
             if (minPrice) {
-                conditions.push(`bp.price >= $${params.length + 1}`);
+                conditions.push(`price >= $${params.length + 1}`);
                 params.push(parseFloat(minPrice));
             }
             if (maxPrice) {
-                conditions.push(`bp.price <= $${params.length + 1}`);
+                conditions.push(`price <= $${params.length + 1}`);
                 params.push(parseFloat(maxPrice));
             }
         } else {
-            // Get all products from products table
+            // Get all products from branch_products table (all branches)
             sql = `
-                SELECT p.*, 
-                       COALESCE(bp.price, 0) as price,
-                       bp.discount_price,
-                       COALESCE(bp.stock_quantity, 0) as stock_quantity,
-                       COALESCE(bp.is_available, true) as is_available
-                FROM products p
-                LEFT JOIN branch_products bp ON p.id = bp.product_id
+                SELECT DISTINCT ON (product_id)
+                    product_id as id,
+                    name,
+                    category,
+                    subcategory,
+                    image,
+                    price,
+                    stock_quantity,
+                    is_available,
+                    NULL as description,
+                    4.5 as rating,
+                    0 as reviews,
+                    false as is_organic,
+                    '' as weight,
+                    false as is_new,
+                    '' as barcode,
+                    '' as brand,
+                    '' as shelf_location,
+                    NOW() as created_at,
+                    NULL as discount_price
+                FROM branch_products
             `;
             
             if (category) {
-                conditions.push(`p.category = $${params.length + 1}`);
+                conditions.push(`category = $${params.length + 1}`);
                 params.push(category);
             }
             if (brand) {
-                conditions.push(`p.brand = $${params.length + 1}`);
-                params.push(brand);
+                conditions.push(`name ILIKE $${params.length + 1}`);
+                params.push(`%${brand}%`);
             }
             if (search) {
-                conditions.push(`(p.name ILIKE $${params.length + 1} OR p.description ILIKE $${params.length + 1} OR p.brand ILIKE $${params.length + 1})`);
+                conditions.push(`name ILIKE $${params.length + 1}`);
                 params.push(`%${search}%`);
             }
             if (minPrice) {
-                conditions.push(`COALESCE(bp.price, 0) >= $${params.length + 1}`);
+                conditions.push(`price >= $${params.length + 1}`);
                 params.push(parseFloat(minPrice));
             }
             if (maxPrice) {
-                conditions.push(`COALESCE(bp.price, 0) <= $${params.length + 1}`);
+                conditions.push(`price <= $${params.length + 1}`);
                 params.push(parseFloat(maxPrice));
-            }
-            if (onSale === 'true') {
-                conditions.push(`bp.discount_price IS NOT NULL`);
             }
         }
 
@@ -238,15 +248,27 @@ app.get('/api/products', async (req, res) => {
 app.get('/api/products/:id', async (req, res) => {
     try {
         const { rows } = await query(
-            `SELECT p.*, COALESCE(bp.price, 0) as price, bp.discount_price, COALESCE(bp.stock_quantity, 0) as stock_quantity 
-             FROM products p 
-             LEFT JOIN branch_products bp ON p.id = bp.product_id 
-             WHERE p.id = $1`,
+            `SELECT 
+                product_id as id,
+                name,
+                category,
+                subcategory,
+                image,
+                price,
+                stock_quantity,
+                is_available,
+                NULL as description,
+                4.5 as rating,
+                0 as reviews
+             FROM branch_products 
+             WHERE product_id = $1
+             LIMIT 1`,
             [req.params.id]
         );
         if (!rows[0]) return res.status(404).json({ error: 'Product not found' });
         res.json(rows[0]);
     } catch (err) {
+        console.error('Get product error:', err);
         res.status(500).json({ error: 'Failed to fetch product' });
     }
 });
