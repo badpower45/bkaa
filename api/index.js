@@ -130,129 +130,81 @@ app.put('/api/auth/profile', verifyToken, async (req, res) => {
 
 // Get all products
 app.get('/api/products', async (req, res) => {
-    const { branchId, category, search, limit, brand, minPrice, maxPrice, onSale } = req.query;
+    const { branchId, category, search, limit } = req.query;
 
     try {
-        let sql;
+        let sql = '';
         const params = [];
-        const conditions = [];
-
+        
         if (branchId) {
-            // Get products from branch_products table for specific branch
+            // Get products for specific branch
             sql = `
                 SELECT 
-                    product_id as id,
+                    product_id::text as id,
                     name,
                     category,
                     subcategory,
                     image,
-                    price,
+                    price::numeric,
                     stock_quantity,
-                    is_available,
-                    NULL as description,
-                    4.5 as rating,
-                    0 as reviews,
-                    false as is_organic,
-                    '' as weight,
-                    false as is_new,
-                    '' as barcode,
-                    '' as brand,
-                    '' as shelf_location,
-                    NOW() as created_at,
-                    NULL as discount_price
+                    is_available
                 FROM branch_products
                 WHERE branch_id = $1
             `;
-            params.push(branchId);
+            params.push(parseInt(branchId));
             
             if (category) {
-                conditions.push(`category = $${params.length + 1}`);
+                sql += ` AND category = $${params.length + 1}`;
                 params.push(category);
             }
             if (search) {
-                conditions.push(`(name ILIKE $${params.length + 1})`);
+                sql += ` AND name ILIKE $${params.length + 1}`;
                 params.push(`%${search}%`);
             }
-            if (minPrice) {
-                conditions.push(`price >= $${params.length + 1}`);
-                params.push(parseFloat(minPrice));
-            }
-            if (maxPrice) {
-                conditions.push(`price <= $${params.length + 1}`);
-                params.push(parseFloat(maxPrice));
-            }
+            
+            sql += ' ORDER BY name ASC';
         } else {
-            // Get all products from branch_products table (all branches)
+            // Get all products (unique by product_id)
             sql = `
                 SELECT DISTINCT ON (product_id)
-                    product_id as id,
+                    product_id::text as id,
                     name,
                     category,
                     subcategory,
                     image,
-                    price,
+                    price::numeric,
                     stock_quantity,
-                    is_available,
-                    NULL as description,
-                    4.5 as rating,
-                    0 as reviews,
-                    false as is_organic,
-                    '' as weight,
-                    false as is_new,
-                    '' as barcode,
-                    '' as brand,
-                    '' as shelf_location,
-                    NOW() as created_at,
-                    NULL as discount_price
+                    is_available
                 FROM branch_products
             `;
             
+            const whereClauses = [];
             if (category) {
-                conditions.push(`category = $${params.length + 1}`);
+                whereClauses.push(`category = $${params.length + 1}`);
                 params.push(category);
             }
-            if (brand) {
-                conditions.push(`name ILIKE $${params.length + 1}`);
-                params.push(`%${brand}%`);
-            }
             if (search) {
-                conditions.push(`name ILIKE $${params.length + 1}`);
+                whereClauses.push(`name ILIKE $${params.length + 1}`);
                 params.push(`%${search}%`);
             }
-            if (minPrice) {
-                conditions.push(`price >= $${params.length + 1}`);
-                params.push(parseFloat(minPrice));
+            
+            if (whereClauses.length > 0) {
+                sql += ' WHERE ' + whereClauses.join(' AND ');
             }
-            if (maxPrice) {
-                conditions.push(`price <= $${params.length + 1}`);
-                params.push(parseFloat(maxPrice));
-            }
-        }
-
-        if (conditions.length > 0) {
-            // If branchId is set, WHERE already exists, so use AND
-            // Otherwise, we need WHERE
-            if (branchId) {
-                sql += ' AND ' + conditions.join(' AND ');
-            } else {
-                sql += ' WHERE ' + conditions.join(' AND ');
-            }
-        }
-
-        // For DISTINCT ON, ORDER BY must start with the DISTINCT ON column
-        if (branchId) {
-            sql += ' ORDER BY name ASC';
-        } else {
+            
             sql += ' ORDER BY product_id, name ASC';
         }
         
-        if (limit) sql += ` LIMIT ${parseInt(limit)}`;
+        if (limit) {
+            sql += ` LIMIT ${parseInt(limit)}`;
+        }
 
         const { rows } = await query(sql, params);
         res.json(rows);
     } catch (err) {
         console.error('Products error:', err);
-        res.status(500).json({ error: 'Failed to fetch products' });
+        console.error('SQL:', err.message);
+        res.status(500).json({ error: 'Failed to fetch products', details: err.message });
     }
 });
 
