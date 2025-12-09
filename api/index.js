@@ -230,7 +230,7 @@ app.get('/api/products', async (req, res) => {
         }
 
         if (conditions.length > 0) {
-            sql += ' AND ' + conditions.join(' AND ');
+            sql += ' WHERE ' + conditions.join(' AND ');
         }
 
         sql += ' ORDER BY name ASC';
