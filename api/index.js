@@ -233,7 +233,13 @@ app.get('/api/products', async (req, res) => {
             sql += ' WHERE ' + conditions.join(' AND ');
         }
 
-        sql += ' ORDER BY name ASC';
+        // For DISTINCT ON, ORDER BY must start with the DISTINCT ON column
+        if (branchId) {
+            sql += ' ORDER BY name ASC';
+        } else {
+            sql += ' ORDER BY product_id, name ASC';
+        }
+        
         if (limit) sql += ` LIMIT ${parseInt(limit)}`;
 
         const { rows } = await query(sql, params);
