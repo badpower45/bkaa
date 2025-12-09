@@ -133,51 +133,97 @@ app.get('/api/products', async (req, res) => {
     const { branchId, category, search, limit, brand, minPrice, maxPrice, onSale } = req.query;
 
     try {
-        let sql = `
-            SELECT p.*, 
-                   COALESCE(bp.price, 0) as price,
-                   bp.discount_price,
-                   COALESCE(bp.stock_quantity, 0) as stock_quantity,
-                   COALESCE(bp.is_available, true) as is_available
-            FROM products p
-            LEFT JOIN branch_products bp ON p.id = bp.product_id
-        `;
+        let sql;
         const params = [];
         const conditions = [];
 
         if (branchId) {
-            conditions.push(`(bp.branch_id = $${params.length + 1} OR bp.branch_id IS NULL)`);
+            // Get products from branch_products table for specific branch
+            sql = `
+                SELECT 
+                    bp.product_id as id,
+                    bp.name,
+                    p.description,
+                    bp.category,
+                    bp.subcategory,
+                    p.rating,
+                    p.reviews,
+                    bp.image,
+                    p.is_organic,
+                    p.weight,
+                    p.is_new,
+                    p.barcode,
+                    p.brand,
+                    p.shelf_location,
+                    p.created_at,
+                    bp.price,
+                    NULL as discount_price,
+                    bp.stock_quantity,
+                    bp.is_available
+                FROM branch_products bp
+                LEFT JOIN products p ON bp.product_id = p.id
+                WHERE bp.branch_id = $1
+            `;
             params.push(branchId);
-        }
-        if (category) {
-            conditions.push(`p.category = $${params.length + 1}`);
-            params.push(category);
-        }
-        if (brand) {
-            conditions.push(`p.brand = $${params.length + 1}`);
-            params.push(brand);
-        }
-        if (search) {
-            conditions.push(`(p.name ILIKE $${params.length + 1} OR p.description ILIKE $${params.length + 1} OR p.brand ILIKE $${params.length + 1})`);
-            params.push(`%${search}%`);
-        }
-        if (minPrice) {
-            conditions.push(`COALESCE(bp.price, 0) >= $${params.length + 1}`);
-            params.push(parseFloat(minPrice));
-        }
-        if (maxPrice) {
-            conditions.push(`COALESCE(bp.price, 0) <= $${params.length + 1}`);
-            params.push(parseFloat(maxPrice));
-        }
-        if (onSale === 'true') {
-            conditions.push(`bp.discount_price IS NOT NULL`);
+            
+            if (category) {
+                conditions.push(`bp.category = $${params.length + 1}`);
+                params.push(category);
+            }
+            if (search) {
+                conditions.push(`(bp.name ILIKE $${params.length + 1} OR p.description ILIKE $${params.length + 1})`);
+                params.push(`%${search}%`);
+            }
+            if (minPrice) {
+                conditions.push(`bp.price >= $${params.length + 1}`);
+                params.push(parseFloat(minPrice));
+            }
+            if (maxPrice) {
+                conditions.push(`bp.price <= $${params.length + 1}`);
+                params.push(parseFloat(maxPrice));
+            }
+        } else {
+            // Get all products from products table
+            sql = `
+                SELECT p.*, 
+                       COALESCE(bp.price, 0) as price,
+                       bp.discount_price,
+                       COALESCE(bp.stock_quantity, 0) as stock_quantity,
+                       COALESCE(bp.is_available, true) as is_available
+                FROM products p
+                LEFT JOIN branch_products bp ON p.id = bp.product_id
+            `;
+            
+            if (category) {
+                conditions.push(`p.category = $${params.length + 1}`);
+                params.push(category);
+            }
+            if (brand) {
+                conditions.push(`p.brand = $${params.length + 1}`);
+                params.push(brand);
+            }
+            if (search) {
+                conditions.push(`(p.name ILIKE $${params.length + 1} OR p.description ILIKE $${params.length + 1} OR p.brand ILIKE $${params.length + 1})`);
+                params.push(`%${search}%`);
+            }
+            if (minPrice) {
+                conditions.push(`COALESCE(bp.price, 0) >= $${params.length + 1}`);
+                params.push(parseFloat(minPrice));
+            }
+            if (maxPrice) {
+                conditions.push(`COALESCE(bp.price, 0) <= $${params.length + 1}`);
+                params.push(parseFloat(maxPrice));
+            }
+            if (onSale === 'true') {
+                conditions.push(`bp.discount_price IS NOT NULL`);
+            }
         }
 
         if (conditions.length > 0) {
-            sql += ' WHERE ' + conditions.join(' AND ');
+            sql += ' AND ' + conditions.join(' AND ');
         }
 
-        sql += ' ORDER BY p.name ASC';
+        sql += ' ORDER BY name ASC';
         if (limit) sql += ` LIMIT ${parseInt(limit)}`;
 
         const { rows } = await query(sql, params);
@@ -349,9 +395,18 @@ app.get('/api/branches/:id', async (req, res) => {
 
 app.get('/api/categories', async (req, res) => {
     try {
-        const { rows } = await query('SELECT DISTINCT category FROM products WHERE category IS NOT NULL ORDER BY category');
-        res.json(rows.map(r => r.category));
+        // Get categories from the categories table with all details
+        const { rows } = await query(
+            `SELECT id, name, name_ar, image, icon, bg_color, description, 
+                    parent_id, display_order, is_active, created_at, updated_at,
+                    (SELECT COUNT(*) FROM products p WHERE p.category = c.name) as products_count
+             FROM categories c
+             WHERE is_active = true
+             ORDER BY display_order, name`
+        );
+        res.json({ data: rows });
     } catch (err) {
+        console.error('Categories fetch error:', err);
         res.status(500).json({ error: 'Failed to fetch categories' });
     }
 });
@@ -752,6 +807,125 @@ app.get('/api/admin/stories', verifyToken, async (req, res) => {
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch stories' });
+    }
+});
+
+// ===================== FACEBOOK REELS =====================
+
+// Get active Facebook Reels
+app.get('/api/facebook-reels', async (req, res) => {
+    try {
+        const { rows } = await query(
+            `SELECT id, title, thumbnail_url, video_url, facebook_url, 
+                    views_count, duration, display_order, is_active, created_at
+             FROM facebook_reels
+             WHERE is_active = true
+             ORDER BY display_order, created_at DESC`
+        );
+        res.json({ data: rows });
+    } catch (err) {
+        console.error('Facebook reels fetch error:', err);
+        // Return empty array if table doesn't exist yet
+        res.json({ data: [] });
+    }
+});
+
+// Get all Facebook Reels for admin
+app.get('/api/facebook-reels/admin/all', verifyToken, async (req, res) => {
+    if (req.userRole !== 'admin' && req.userRole !== 'owner') {
+        return res.status(403).json({ error: 'Admin only' });
+    }
+
+    try {
+        const { rows } = await query(
+            `SELECT * FROM facebook_reels ORDER BY display_order, created_at DESC`
+        );
+        res.json({ data: rows });
+    } catch (err) {
+        console.error('Facebook reels admin fetch error:', err);
+        res.status(500).json({ error: 'Failed to fetch reels' });
+    }
+});
+
+// Get single reel by ID
+app.get('/api/facebook-reels/:id', async (req, res) => {
+    try {
+        const { rows } = await query(
+            'SELECT * FROM facebook_reels WHERE id = $1',
+            [req.params.id]
+        );
+        if (!rows[0]) return res.status(404).json({ error: 'Reel not found' });
+        res.json({ data: rows[0] });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch reel' });
+    }
+});
+
+// Create new reel (Admin only)
+app.post('/api/facebook-reels', verifyToken, async (req, res) => {
+    if (req.userRole !== 'admin' && req.userRole !== 'owner') {
+        return res.status(403).json({ error: 'Admin only' });
+    }
+
+    const { title, thumbnail_url, video_url, facebook_url, views_count, duration, display_order, is_active } = req.body;
+    
+    try {
+        const { rows } = await query(
+            `INSERT INTO facebook_reels 
+                (title, thumbnail_url, video_url, facebook_url, views_count, duration, display_order, is_active)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             RETURNING *`,
+            [title, thumbnail_url, video_url, facebook_url, views_count, duration, display_order || 0, is_active !== false]
+        );
+        res.status(201).json({ data: rows[0] });
+    } catch (err) {
+        console.error('Create reel error:', err);
+        res.status(500).json({ error: 'Failed to create reel' });
+    }
+});
+
+// Update reel (Admin only)
+app.put('/api/facebook-reels/:id', verifyToken, async (req, res) => {
+    if (req.userRole !== 'admin' && req.userRole !== 'owner') {
+        return res.status(403).json({ error: 'Admin only' });
+    }
+
+    const { title, thumbnail_url, video_url, facebook_url, views_count, duration, display_order, is_active } = req.body;
+    
+    try {
+        const { rows } = await query(
+            `UPDATE facebook_reels SET 
+                title = COALESCE($1, title),
+                thumbnail_url = COALESCE($2, thumbnail_url),
+                video_url = COALESCE($3, video_url),
+                facebook_url = COALESCE($4, facebook_url),
+                views_count = COALESCE($5, views_count),
+                duration = COALESCE($6, duration),
+                display_order = COALESCE($7, display_order),
+                is_active = COALESCE($8, is_active),
+                updated_at = NOW()
+             WHERE id = $9
+             RETURNING *`,
+            [title, thumbnail_url, video_url, facebook_url, views_count, duration, display_order, is_active, req.params.id]
+        );
+        if (!rows[0]) return res.status(404).json({ error: 'Reel not found' });
+        res.json({ data: rows[0] });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update reel' });
+    }
+});
+
+// Delete reel (Admin only)
+app.delete('/api/facebook-reels/:id', verifyToken, async (req, res) => {
+    if (req.userRole !== 'admin' && req.userRole !== 'owner') {
+        return res.status(403).json({ error: 'Admin only' });
+    }
+
+    try {
+        await query('DELETE FROM facebook_reels WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to delete reel' });
     }
 });
 
