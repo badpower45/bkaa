@@ -230,7 +230,13 @@ app.get('/api/products', async (req, res) => {
         }
 
         if (conditions.length > 0) {
-            sql += ' WHERE ' + conditions.join(' AND ');
+            // If branchId is set, WHERE already exists, so use AND
+            // Otherwise, we need WHERE
+            if (branchId) {
+                sql += ' AND ' + conditions.join(' AND ');
+            } else {
+                sql += ' WHERE ' + conditions.join(' AND ');
+            }
         }
 
         // For DISTINCT ON, ORDER BY must start with the DISTINCT ON column
