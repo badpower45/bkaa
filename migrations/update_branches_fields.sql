@@ -1,13 +1,14 @@
 -- Add new columns to branches table for enhanced functionality
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS name_ar TEXT;
-ALTER TABLE branches ADD COLUMN IF NOT EXISTS google_maps_link TEXT;
 
--- Update existing columns if they don't match the new naming
--- Rename maps_link to google_maps_link if it exists
+-- Handle google_maps_link column (check if maps_link exists first)
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'maps_link') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'maps_link') 
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'google_maps_link') THEN
         ALTER TABLE branches RENAME COLUMN maps_link TO google_maps_link;
+    ELSIF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'branches' AND column_name = 'google_maps_link') THEN
+        ALTER TABLE branches ADD COLUMN google_maps_link TEXT;
     END IF;
 END $$;
 
