@@ -137,54 +137,62 @@ app.get('/api/products', async (req, res) => {
         const params = [];
         
         if (branchId) {
-            // Get products for specific branch
+            // Get products for specific branch with JOIN to products table
             sql = `
                 SELECT 
-                    product_id::text as id,
-                    name,
-                    category,
-                    subcategory,
-                    image,
-                    price::numeric,
-                    stock_quantity,
-                    is_available
-                FROM branch_products
-                WHERE branch_id = $1
+                    bp.product_id as id,
+                    p.name,
+                    p.category,
+                    p.subcategory,
+                    p.image,
+                    bp.price,
+                    bp.stock_quantity,
+                    bp.is_available,
+                    p.description,
+                    p.rating,
+                    p.barcode
+                FROM branch_products bp
+                INNER JOIN products p ON bp.product_id = p.id
+                WHERE bp.branch_id = $1
             `;
             params.push(parseInt(branchId));
             
             if (category) {
-                sql += ` AND category = $${params.length + 1}`;
+                sql += ` AND p.category = $${params.length + 1}`;
                 params.push(category);
             }
             if (search) {
-                sql += ` AND name ILIKE $${params.length + 1}`;
+                sql += ` AND p.name ILIKE $${params.length + 1}`;
                 params.push(`%${search}%`);
             }
             
-            sql += ' ORDER BY name ASC';
+            sql += ' ORDER BY p.name ASC';
         } else {
-            // Get all products (unique by product_id)
+            // Get all products (first branch for each product)
             sql = `
-                SELECT DISTINCT ON (product_id)
-                    product_id::text as id,
-                    name,
-                    category,
-                    subcategory,
-                    image,
-                    price::numeric,
-                    stock_quantity,
-                    is_available
-                FROM branch_products
+                SELECT DISTINCT ON (p.id)
+                    p.id,
+                    p.name,
+                    p.category,
+                    p.subcategory,
+                    p.image,
+                    COALESCE(bp.price, 0) as price,
+                    COALESCE(bp.stock_quantity, 0) as stock_quantity,
+                    COALESCE(bp.is_available, true) as is_available,
+                    p.description,
+                    p.rating,
+                    p.barcode
+                FROM products p
+                LEFT JOIN branch_products bp ON p.id = bp.product_id
             `;
             
             const whereClauses = [];
             if (category) {
-                whereClauses.push(`category = $${params.length + 1}`);
+                whereClauses.push(`p.category = $${params.length + 1}`);
                 params.push(category);
             }
             if (search) {
-                whereClauses.push(`name ILIKE $${params.length + 1}`);
+                whereClauses.push(`p.name ILIKE $${params.length + 1}`);
                 params.push(`%${search}%`);
             }
             
@@ -192,7 +200,7 @@ app.get('/api/products', async (req, res) => {
                 sql += ' WHERE ' + whereClauses.join(' AND ');
             }
             
-            sql += ' ORDER BY product_id, name ASC';
+            sql += ' ORDER BY p.id, p.name ASC';
         }
         
         if (limit) {
