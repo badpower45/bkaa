@@ -79,7 +79,20 @@ router.get('/nearby', async (req, res) => {
 
 // Create branch (Admin only)
 router.post('/', [verifyToken, isAdmin], async (req, res) => {
-    const { name, locationLat, locationLng, coverageRadiusKm } = req.body;
+    const { 
+        name, 
+        name_ar, 
+        address, 
+        phone, 
+        google_maps_link,
+        latitude, 
+        longitude, 
+        delivery_radius,
+        // Legacy fields support
+        locationLat, 
+        locationLng, 
+        coverageRadiusKm 
+    } = req.body;
 
     if (!name) {
         return res.status(400).json({ error: 'Branch name required' });
@@ -87,18 +100,26 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
 
     try {
         const sql = `
-            INSERT INTO branches (name, location_lat, location_lng, coverage_radius_km)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO branches (
+                name, name_ar, address, phone, google_maps_link,
+                latitude, longitude, delivery_radius
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING *
         `;
 
         const { rows } = await query(sql, [
             name,
-            locationLat || null,
-            locationLng || null,
-            coverageRadiusKm || 5.0
+            name_ar || null,
+            address || null,
+            phone || null,
+            google_maps_link || null,
+            latitude || locationLat || null,
+            longitude || locationLng || null,
+            delivery_radius || coverageRadiusKm || 10
         ]);
 
+        console.log('Branch created:', rows[0]);
         res.json({ message: 'success', data: rows[0] });
     } catch (err) {
         console.error("Error creating branch:", err);
@@ -108,33 +129,85 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
 
 // Update branch
 router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
-    const { name, locationLat, locationLng, coverageRadiusKm, isActive } = req.body;
+    const { 
+        name,
+        name_ar,
+        address,
+        phone,
+        google_maps_link,
+        latitude,
+        longitude,
+        delivery_radius,
+        is_active,
+        // Legacy fields support
+        locationLat, 
+        locationLng, 
+        coverageRadiusKm,
+        isActive 
+    } = req.body;
 
     try {
+        // Build dynamic update query based on provided fields
+        const updates = [];
+        const values = [];
+        let paramCount = 1;
+
+        if (name !== undefined) {
+            updates.push(`name = $${paramCount++}`);
+            values.push(name);
+        }
+        if (name_ar !== undefined) {
+            updates.push(`name_ar = $${paramCount++}`);
+            values.push(name_ar);
+        }
+        if (address !== undefined) {
+            updates.push(`address = $${paramCount++}`);
+            values.push(address);
+        }
+        if (phone !== undefined) {
+            updates.push(`phone = $${paramCount++}`);
+            values.push(phone);
+        }
+        if (google_maps_link !== undefined) {
+            updates.push(`google_maps_link = $${paramCount++}`);
+            values.push(google_maps_link);
+        }
+        if (latitude !== undefined || locationLat !== undefined) {
+            updates.push(`latitude = $${paramCount++}`);
+            values.push(latitude !== undefined ? latitude : locationLat);
+        }
+        if (longitude !== undefined || locationLng !== undefined) {
+            updates.push(`longitude = $${paramCount++}`);
+            values.push(longitude !== undefined ? longitude : locationLng);
+        }
+        if (delivery_radius !== undefined || coverageRadiusKm !== undefined) {
+            updates.push(`delivery_radius = $${paramCount++}`);
+            values.push(delivery_radius !== undefined ? delivery_radius : coverageRadiusKm);
+        }
+        if (is_active !== undefined || isActive !== undefined) {
+            updates.push(`is_active = $${paramCount++}`);
+            values.push(is_active !== undefined ? is_active : isActive);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+
+        values.push(req.params.id);
         const sql = `
             UPDATE branches
-            SET name = COALESCE($1, name),
-                location_lat = COALESCE($2, location_lat),
-                location_lng = COALESCE($3, location_lng),
-                coverage_radius_km = COALESCE($4, coverage_radius_km),
-                is_active = COALESCE($5, is_active)
-            WHERE id = $6
+            SET ${updates.join(', ')}
+            WHERE id = $${paramCount}
             RETURNING *
         `;
 
-        const { rows } = await query(sql, [
-            name,
-            locationLat,
-            locationLng,
-            coverageRadiusKm,
-            isActive,
-            req.params.id
-        ]);
+        const { rows } = await query(sql, values);
 
         if (rows.length === 0) {
             return res.status(404).json({ error: 'Branch not found' });
         }
 
+        console.log('Branch updated:', rows[0]);
         res.json({ message: 'success', data: rows[0] });
     } catch (err) {
         console.error("Error updating branch:", err);
