@@ -225,10 +225,10 @@ app.get('/api/products/:id', async (req, res) => {
         let sql = `
             SELECT 
                 bp.product_id as id,
-                bp.name,
-                bp.category,
-                bp.subcategory,
-                bp.image,
+                COALESCE(bp.name, p.name) as name,
+                COALESCE(bp.category, p.category) as category,
+                COALESCE(bp.subcategory, p.subcategory) as subcategory,
+                COALESCE(bp.image, p.image) as image,
                 bp.price,
                 bp.stock_quantity,
                 bp.is_available,
@@ -239,7 +239,7 @@ app.get('/api/products/:id', async (req, res) => {
                 p.weight,
                 p.is_new
             FROM branch_products bp
-            LEFT JOIN products p ON bp.product_id = p.id
+            INNER JOIN products p ON bp.product_id = p.id
             WHERE bp.product_id = $1
         `;
         
