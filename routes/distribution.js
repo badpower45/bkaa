@@ -373,17 +373,21 @@ router.get('/available-delivery/:branchId', verifyToken, async (req, res) => {
     }
 });
 
-// تعيين ديليفري للطلب (مع مهلة 5 دقائق للقبول)
+// تعيين ديليفري للطلب (مع مهلة قابلة للتخصيص للقبول)
 router.post('/assign-delivery/:orderId', verifyToken, async (req, res) => {
     const { orderId } = req.params;
-    const { deliveryStaffId, expectedDeliveryTime } = req.body;
+    const { deliveryStaffId, acceptTimeoutMinutes, expectedDeliveryMinutes } = req.body;
     
     try {
         await query('BEGIN');
         
-        // حساب الموعد النهائي للقبول (5 دقائق)
-        const acceptDeadline = new Date(Date.now() + 5 * 60 * 1000);
-        const deliveryTime = expectedDeliveryTime || DEFAULT_EXPECTED_DELIVERY_TIME;
+        // حساب الموعد النهائي للقبول (قابل للتخصيص - افتراضي 5 دقائق)
+        const acceptTimeout = acceptTimeoutMinutes || 5;
+        const acceptDeadline = new Date(Date.now() + acceptTimeout * 60 * 1000);
+        const deliveryTime = expectedDeliveryMinutes || DEFAULT_EXPECTED_DELIVERY_TIME;
+        
+        console.log(`📦 Assigning order ${orderId} to delivery staff ${deliveryStaffId}`);
+        console.log(`⏱️ Accept timeout: ${acceptTimeout} minutes, Expected delivery: ${deliveryTime} minutes`);
         
         // تحديث سجل التعيين
         await query(`
