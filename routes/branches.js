@@ -99,16 +99,21 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
     }
 
     try {
+        // First, get the next available ID
+        const { rows: maxRows } = await query('SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM branches');
+        const nextId = maxRows[0].next_id;
+
         const sql = `
             INSERT INTO branches (
-                name, name_ar, address, phone, google_maps_link,
+                id, name, name_ar, address, phone, google_maps_link,
                 latitude, longitude, delivery_radius
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
         `;
 
         const { rows } = await query(sql, [
+            nextId,
             name,
             name_ar || null,
             address || null,
@@ -123,6 +128,12 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
         res.json({ message: 'success', data: rows[0] });
     } catch (err) {
         console.error("Error creating branch:", err);
+        
+        // Better error message for duplicate key
+        if (err.code === '23505') {
+            return res.status(409).json({ error: 'Branch with this ID already exists. Please try again.' });
+        }
+        
         res.status(500).json({ error: err.message });
     }
 });
