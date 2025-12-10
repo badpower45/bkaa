@@ -766,7 +766,11 @@ router.get('/my-delivery-orders', verifyToken, async (req, res) => {
             LEFT JOIN users u ON o.user_id = u.id
             LEFT JOIN branches b ON o.branch_id = b.id
             WHERE oa.delivery_staff_id = $1 
-              AND oa.status IN ('assigned', 'accepted', 'picked_up', 'arriving')
+              AND (
+                oa.status IN ('assigned', 'accepted', 'picked_up', 'arriving')
+                OR o.status IN ('confirmed', 'ready', 'preparing')
+              )
+              AND o.status NOT IN ('delivered', 'cancelled')
             ORDER BY oa.assigned_at DESC
         `, [staffId]);
         
