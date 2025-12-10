@@ -209,7 +209,7 @@ router.get('/orders-to-prepare', verifyToken, async (req, res) => {
 // بدء تحضير طلب
 router.post('/start-preparation/:orderId', verifyToken, async (req, res) => {
     const { orderId } = req.params;
-    const distributorId = req.user.id;
+    const distributorId = req.userId;  // Fixed: use req.userId from middleware
     
     try {
         await query('BEGIN');
@@ -289,7 +289,7 @@ router.get('/preparation-items/:orderId', verifyToken, async (req, res) => {
 router.put('/preparation-items/:itemId', verifyToken, async (req, res) => {
     const { itemId } = req.params;
     const { isPrepared, notes } = req.body;
-    const preparedBy = req.user.id;
+    const preparedBy = req.userId;  // Fixed: use req.userId
     
     try {
         const { rows } = await query(`
@@ -746,7 +746,7 @@ router.get('/my-delivery-orders', verifyToken, async (req, res) => {
     try {
         const { rows: staffRows } = await query(
             'SELECT id FROM delivery_staff WHERE user_id = $1',
-            [req.user.id]
+            [req.userId]  // Fixed: use req.userId
         );
         
         if (staffRows.length === 0) {
@@ -805,7 +805,7 @@ router.post('/rate-delivery/:orderId', verifyToken, async (req, res) => {
             return res.status(404).json({ error: 'الطلب غير موجود' });
         }
         
-        if (orderRows[0].user_id !== req.user.id) {
+        if (orderRows[0].user_id !== req.userId) {
             await query('ROLLBACK');
             return res.status(403).json({ error: 'غير مصرح' });
         }
@@ -865,7 +865,7 @@ router.get('/pending-ratings', verifyToken, async (req, res) => {
               AND oa.delivered_at < NOW() - INTERVAL '15 minutes'
             ORDER BY oa.delivered_at DESC
             LIMIT 3
-        `, [req.user.id]);
+        `, [req.userId]);  // Fixed: use req.userId
         
         res.json({ message: 'success', data: rows });
     } catch (err) {
@@ -879,7 +879,7 @@ router.get('/delivery-stats', verifyToken, async (req, res) => {
     try {
         const { rows: staffRows } = await query(
             'SELECT * FROM delivery_staff WHERE user_id = $1',
-            [req.user.id]
+            [req.userId]  // Fixed: use req.userId
         );
         
         if (staffRows.length === 0) {
