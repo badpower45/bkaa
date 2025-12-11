@@ -4,6 +4,34 @@ import { verifyToken, isAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
+// Seed default branches (for development)
+router.post('/dev/seed', async (req, res) => {
+    try {
+        const defaultBranches = [
+            { name: 'الفرع الرئيسي', location_lat: 30.0444, location_lng: 31.2357, address: 'القاهرة - المعادي', phone: '01012345678' },
+            { name: 'فرع المهندسين', location_lat: 30.0616, location_lng: 31.2099, address: 'الجيزة - المهندسين', phone: '01023456789' },
+            { name: 'فرع مدينة نصر', location_lat: 30.0566, location_lng: 31.3390, address: 'القاهرة - مدينة نصر', phone: '01034567890' }
+        ];
+
+        for (const branch of defaultBranches) {
+            // Check if exists first
+            const existing = await query('SELECT id FROM branches WHERE name = $1', [branch.name]);
+            if (existing.rows.length === 0) {
+                await query(
+                    `INSERT INTO branches (name, location_lat, location_lng, address, phone, is_active)
+                     VALUES ($1, $2, $3, $4, $5, true)`,
+                    [branch.name, branch.location_lat, branch.location_lng, branch.address, branch.phone]
+                );
+            }
+        }
+
+        res.json({ success: true, message: 'تم إضافة الفروع بنجاح' });
+    } catch (err) {
+        console.error("Error seeding branches:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Get all branches
 router.get('/', async (req, res) => {
     const { active } = req.query;

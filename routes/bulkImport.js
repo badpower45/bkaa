@@ -32,25 +32,15 @@ const upload = multer({
 const COLUMN_MAPPING = {
     // Required fields
     'name': ['name', 'product_name', 'اسم المنتج', 'الاسم'],
-    'price': ['price', 'السعر', 'سعر'],
-    'image': ['image', 'image_url', 'الصورة', 'صورة'],
-    'category': ['category', 'القسم', 'الفئة', 'فئة'],
-    
-    // Optional fields
-    'name_en': ['name_en', 'english_name', 'الاسم بالانجليزي'],
-    'description': ['description', 'الوصف', 'وصف'],
-    'description_en': ['description_en', 'english_description'],
-    'weight': ['weight', 'الوزن', 'وزن'],
     'barcode': ['barcode', 'الباركود', 'باركود'],
-    'sku': ['sku'],
-    'brand': ['brand', 'brand_id', 'البراند', 'الماركة'],
-    'stock_quantity': ['stock_quantity', 'stock', 'الكمية', 'كمية'],
-    'old_price': ['old_price', 'السعر القديم'],
-    'discount_percentage': ['discount_percentage', 'discount', 'الخصم', 'خصم'],
-    'nutrition_info': ['nutrition_info', 'معلومات غذائية'],
-    'ingredients': ['ingredients', 'المكونات', 'مكونات'],
-    'allergens': ['allergens', 'الحساسية', 'حساسية'],
-    'branch_id': ['branch_id', 'معرف الفرع']
+    'old_price': ['old_price', 'السعر قبل', 'السعر القديم', 'سعر قبل'],
+    'price': ['price', 'السعر بعد', 'السعر', 'سعر بعد', 'سعر'],
+    'category': ['category', 'التصنيف الاساسي', 'التصنيف الأساسي', 'القسم', 'الفئة'],
+    'subcategory': ['subcategory', 'sub_category', 'التصنيف الثانوي', 'تصنيف ثانوي'],
+    'branch_id': ['branch_id', 'الفرع', 'فرع', 'معرف الفرع'],
+    'stock_quantity': ['stock_quantity', 'الكمية', 'الكميه', 'كمية', 'كميه'],
+    'image': ['image', 'image_url', 'الصورة', 'صورة', 'صوره'],
+    'expiry_date': ['expiry_date', 'تاريخ الصلاحيه', 'تاريخ الصلاحية', 'صلاحيه', 'صلاحية']
 };
 
 // Find column value by multiple possible names
@@ -71,34 +61,26 @@ function mapRowToProduct(row, rowIndex) {
     const product = {};
     const errors = [];
     
-    // Required fields
-    const requiredFields = ['name', 'price', 'image', 'category'];
-    for (const field of requiredFields) {
+    // All 10 fields are required
+    const allFields = [
+        'name', 'barcode', 'old_price', 'price', 'category', 
+        'subcategory', 'branch_id', 'stock_quantity', 'image', 'expiry_date'
+    ];
+    
+    for (const field of allFields) {
         const value = findColumnValue(row, COLUMN_MAPPING[field]);
-        if (!value) {
+        if (!value && value !== 0) {
             errors.push(`Missing required field: ${field}`);
         } else {
             product[field] = value;
         }
     }
     
-    // Optional fields
-    const optionalFields = [
-        'name_en', 'description', 'description_en', 'weight', 'barcode', 
-        'sku', 'brand', 'stock_quantity', 'old_price', 'discount_percentage',
-        'nutrition_info', 'ingredients', 'allergens', 'branch_id'
-    ];
-    
-    for (const field of optionalFields) {
-        const value = findColumnValue(row, COLUMN_MAPPING[field]);
-        product[field] = value || null;
-    }
-    
     // Validation
     if (product.price) {
         const priceNum = parseFloat(product.price);
         if (isNaN(priceNum) || priceNum <= 0) {
-            errors.push('Invalid price format - must be a positive number');
+            errors.push('السعر بعد غير صحيح - يجب أن يكون رقم أكبر من صفر');
         } else {
             product.price = priceNum;
         }
@@ -106,49 +88,40 @@ function mapRowToProduct(row, rowIndex) {
     
     if (product.old_price) {
         const oldPriceNum = parseFloat(product.old_price);
-        if (!isNaN(oldPriceNum)) {
+        if (isNaN(oldPriceNum) || oldPriceNum < 0) {
+            errors.push('السعر قبل غير صحيح - يجب أن يكون رقم');
+        } else {
             product.old_price = oldPriceNum;
-        } else {
-            product.old_price = null;
         }
-    }
-    
-    if (product.discount_percentage) {
-        const discountNum = parseInt(product.discount_percentage);
-        if (!isNaN(discountNum) && discountNum >= 0 && discountNum <= 100) {
-            product.discount_percentage = discountNum;
-        } else {
-            product.discount_percentage = 0;
-        }
-    } else {
-        product.discount_percentage = 0;
     }
     
     if (product.stock_quantity) {
         const stockNum = parseInt(product.stock_quantity);
-        if (!isNaN(stockNum) && stockNum >= 0) {
-            product.stock_quantity = stockNum;
+        if (isNaN(stockNum) || stockNum < 0) {
+            errors.push('الكمية غير صحيحة - يجب أن تكون رقم صحيح');
         } else {
-            product.stock_quantity = 0;
+            product.stock_quantity = stockNum;
         }
-    } else {
-        product.stock_quantity = 0;
+    }
+    
+    if (product.branch_id) {
+        const branchNum = parseInt(product.branch_id);
+        if (isNaN(branchNum) || branchNum <= 0) {
+            errors.push('معرف الفرع غير صحيح - يجب أن يكون رقم أكبر من صفر');
+        } else {
+            product.branch_id = branchNum;
+        }
     }
     
     if (product.image && !product.image.startsWith('http') && !product.image.startsWith('data:')) {
-        errors.push('Invalid image URL - must start with http:// or https://');
+        errors.push('رابط الصورة غير صحيح - يجب أن يبدأ بـ http:// أو https://');
     }
     
-    // Default branch_id to 1 if not provided
-    if (!product.branch_id) {
-        product.branch_id = 1;
+    // Calculate discount percentage
+    if (product.old_price && product.price && product.old_price > product.price) {
+        product.discount_percentage = Math.round(((product.old_price - product.price) / product.old_price) * 100);
     } else {
-        const branchNum = parseInt(product.branch_id);
-        if (!isNaN(branchNum)) {
-            product.branch_id = branchNum;
-        } else {
-            product.branch_id = 1;
-        }
+        product.discount_percentage = 0;
     }
     
     return { product, errors, rowIndex };
@@ -218,20 +191,20 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, NOW(), NOW()
                         ) RETURNING id, name, category, price
                     `, [
+                        product.nacategory, subcategory, image, barcode,
+                            old_price, discount_percentage,
+                            is_active, created_at, updated_at
+                        ) VALUES (
+                            $1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW()
+                        ) RETURNING id, name, category
+                    `, [
                         product.name,
-                        product.name_en,
-                        product.description,
-                        product.description_en,
                         product.category,
+                        product.subcategory,
                         product.image,
-                        product.weight,
                         product.barcode,
-                        product.sku,
                         product.old_price,
-                        product.discount_percentage,
-                        product.nutrition_info ? JSON.stringify(product.nutrition_info) : null,
-                        product.ingredients,
-                        product.allergens
+                        product.discount_percentage
                     ]);
                     
                     const productId = insertedProduct[0].id;
@@ -240,29 +213,22 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                     await query(`
                         INSERT INTO branch_products (
                             branch_id, product_id, price, stock_quantity, 
-                            is_available, created_at, updated_at
+                            expiry_date, is_available, created_at, updated_at
                         ) VALUES (
-                            $1, $2, $3, $4, true, NOW(), NOW()
+                            $1, $2, $3, $4, $5, true, NOW(), NOW()
                         )
                         ON CONFLICT (branch_id, product_id) 
                         DO UPDATE SET 
                             price = EXCLUDED.price,
                             stock_quantity = EXCLUDED.stock_quantity,
+                            expiry_date = EXCLUDED.expiry_date,
                             updated_at = NOW()
                     `, [
                         product.branch_id,
                         productId,
                         product.price,
-                        product.stock_quantity
-                    ]);
-                    
-                    imported.push({
-                        id: productId,
-                        name: product.name,
-                        category: product.category,
-                        price: product.price
-                    });
-                    
+                        product.stock_quantity,
+                        product.expiry_date
                 } catch (err) {
                     console.error('Error importing product:', product.name, err);
                     importErrors.push({
@@ -316,23 +282,28 @@ router.get('/bulk-import/template', (req, res) => {
                 'discount_percentage': 15,
                 'category': 'حلويات',
                 'weight': '100g',
-                'barcode': '6221155123456',
-                'sku': 'CHOC-GAL-100',
-                'brand': 'جالاكسي',
-                'stock_quantity': 150,
-                'image': 'https://i.imgur.com/abc123.jpg',
-                'description': 'شوكولاتة لذيذة بالحليب',
-                'description_en': 'Delicious milk chocolate',
-                'ingredients': 'حليب، سكر، كاكاو',
-                'allergens': 'حليب',
-                'branch_id': 1
-            }
-        ];
-        
-        // Create workbook
-        const worksheet = xlsx.utils.json_to_sheet(templateData);
-        const workbook = xlsx.utils.book_new();
-        xlsx.utils.book_append_sheet(workbook, worksheet, 'Products');
+                'اسم المنتج': 'شوكولاتة جالاكسي 100 جرام',
+                'الباركود': '6221155123456',
+                'السعر قبل': 30.00,
+                'السعر بعد': 25.50,
+                'التصنيف الاساسي': 'حلويات',
+                'التصنيف الثانوي': 'شوكولاتة',
+                'الفرع': 1,
+                'الكميه': 150,
+                'الصورة': 'https://i.imgur.com/abc123.jpg',
+                'تاريخ الصلاحيه': '2026-12-31'
+            },
+            {
+                'اسم المنتج': 'بيبسي 2 لتر',
+                'الباركود': '6221155789012',
+                'السعر قبل': 20.00,
+                'السعر بعد': 18.00,
+                'التصنيف الاساسي': 'مشروبات',
+                'التصنيف الثانوي': 'مشروبات غازية',
+                'الفرع': 1,
+                'الكميه': 200,
+                'الصورة': 'https://i.imgur.com/xyz789.jpg',
+                'تاريخ الصلاحيه': '2026-06-30'_sheet(workbook, worksheet, 'Products');
         
         // Generate buffer
         const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });

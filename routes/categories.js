@@ -40,6 +40,72 @@ router.get('/name/:name', async (req, res) => {
     }
 });
 
+// Seed default categories (for development)
+router.post('/dev/seed', async (req, res) => {
+    try {
+        const defaultCategories = [
+            { name: 'بقالة', name_ar: 'بقالة', icon: '🛒', bg_color: 'bg-amber-50', display_order: 1 },
+            { name: 'ألبان', name_ar: 'ألبان', icon: '🥛', bg_color: 'bg-blue-50', display_order: 2 },
+            { name: 'مشروبات', name_ar: 'مشروبات', icon: '🥤', bg_color: 'bg-cyan-50', display_order: 3 },
+            { name: 'سناكس', name_ar: 'سناكس', icon: '🍿', bg_color: 'bg-yellow-50', display_order: 4 },
+            { name: 'حلويات', name_ar: 'حلويات', icon: '🍫', bg_color: 'bg-pink-50', display_order: 5 },
+            { name: 'زيوت', name_ar: 'زيوت', icon: '🫗', bg_color: 'bg-green-50', display_order: 6 },
+            { name: 'منظفات', name_ar: 'منظفات', icon: '🧼', bg_color: 'bg-purple-50', display_order: 7 },
+            { name: 'عناية شخصية', name_ar: 'عناية شخصية', icon: '🧴', bg_color: 'bg-indigo-50', display_order: 8 }
+        ];
+
+        for (const cat of defaultCategories) {
+            // Check if exists first
+            const existing = await pool.query('SELECT id FROM categories WHERE name = $1 AND parent_id IS NULL', [cat.name]);
+            if (existing.rows.length === 0) {
+                await pool.query(
+                    `INSERT INTO categories (name, name_ar, icon, bg_color, display_order, is_active, parent_id)
+                     VALUES ($1, $2, $3, $4, $5, true, NULL)`,
+                    [cat.name, cat.name_ar, cat.icon, cat.bg_color, cat.display_order]
+                );
+            }
+        }
+
+        // Add some subcategories
+        const subcats = [
+            { parent: 'بقالة', name: 'أرز', name_ar: 'أرز' },
+            { parent: 'بقالة', name: 'مكرونة', name_ar: 'مكرونة' },
+            { parent: 'بقالة', name: 'سكر', name_ar: 'سكر' },
+            { parent: 'ألبان', name: 'لبن', name_ar: 'لبن' },
+            { parent: 'ألبان', name: 'جبن', name_ar: 'جبن' },
+            { parent: 'ألبان', name: 'زبادي', name_ar: 'زبادي' },
+            { parent: 'مشروبات', name: 'مشروبات غازية', name_ar: 'مشروبات غازية' },
+            { parent: 'مشروبات', name: 'عصائر', name_ar: 'عصائر' },
+            { parent: 'سناكس', name: 'شيبس', name_ar: 'شيبس' },
+            { parent: 'سناكس', name: 'بسكويت', name_ar: 'بسكويت' },
+            { parent: 'حلويات', name: 'شوكولاتة', name_ar: 'شوكولاتة' },
+            { parent: 'حلويات', name: 'حلوى', name_ar: 'حلوى' }
+        ];
+
+        for (const sub of subcats) {
+            const parentResult = await pool.query('SELECT id FROM categories WHERE name = $1 AND parent_id IS NULL', [sub.parent]);
+            if (parentResult.rows.length > 0) {
+                const existingSub = await pool.query(
+                    'SELECT id FROM categories WHERE name = $1 AND parent_id = $2',
+                    [sub.name, parentResult.rows[0].id]
+                );
+                if (existingSub.rows.length === 0) {
+                    await pool.query(
+                        `INSERT INTO categories (name, name_ar, parent_id, is_active)
+                         VALUES ($1, $2, $3, true)`,
+                        [sub.name, sub.name_ar, parentResult.rows[0].id]
+                    );
+                }
+            }
+        }
+
+        res.json({ success: true, message: 'تم إضافة التصنيفات بنجاح' });
+    } catch (error) {
+        console.error('Error seeding categories:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // Get all categories with images
 router.get('/', async (req, res) => {
     try {
