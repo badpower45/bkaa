@@ -287,6 +287,7 @@ router.get('/', [verifyToken], async (req, res) => {
     const requesterId = req.userId;
 
     console.log('GET /orders - userRole:', userRole, 'requesterId:', requesterId, 'queryUserId:', userId);
+    console.log('GET /orders - Authorization header:', req.headers['authorization'] ? 'Present' : 'Missing');
 
     let sql = "SELECT * FROM orders";
     let params = [];

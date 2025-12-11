@@ -184,14 +184,23 @@ export const orderSchema = Joi.object({
         .valid('cod', 'card', 'wallet', 'installment')
         .default('cod'),
     shippingDetails: Joi.object({
-        firstName: Joi.string().max(50),
-        lastName: Joi.string().max(50),
-        phone: Joi.string().pattern(/^[0-9+]{10,15}$/),
-        address: Joi.string().max(500),
-        city: Joi.string().max(100),
-        area: Joi.string().max(100),
-        notes: Joi.string().max(500).allow(null, '')
-    }).allow(null),
+        firstName: Joi.string().max(50).optional().allow('', null),
+        lastName: Joi.string().max(50).optional().allow('', null),
+        phone: Joi.string().pattern(/^[0-9+]{10,15}$/).optional().allow('', null),
+        address: Joi.string().max(500).optional().allow('', null),
+        city: Joi.string().max(100).optional().allow('', null),
+        area: Joi.string().max(100).optional().allow('', null),
+        notes: Joi.string().max(500).optional().allow('', null),
+        building: Joi.string().max(100).optional().allow('', null),
+        street: Joi.string().max(100).optional().allow('', null),
+        floor: Joi.string().max(50).optional().allow('', null),
+        apartment: Joi.string().max(50).optional().allow('', null),
+        coordinates: Joi.object({
+            lat: Joi.number(),
+            lng: Joi.number()
+        }).optional().allow(null),
+        fulfillmentType: Joi.string().valid('delivery', 'pickup').optional().allow('', null)
+    }).optional().allow(null),
     deliveryAddress: Joi.string().max(500).allow(null, ''),
     couponId: Joi.number().integer().positive().allow(null),
     couponCode: Joi.string().max(50).allow(null, ''),
