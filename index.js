@@ -191,4 +191,5 @@ if (!process.env.VERCEL) {
 }
 
 // Export app for Vercel serverless
+// Last updated: 2025-12-11 20:50 - Force redeploy to fix syntax error
 export default app;

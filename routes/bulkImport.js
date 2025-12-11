@@ -182,16 +182,7 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                     // Insert into products table
                     const { rows: insertedProduct } = await query(`
                         INSERT INTO products (
-                            name, name_en, description, description_en, 
-                            category, image, weight, barcode, sku,
-                            old_price, discount_percentage,
-                            nutrition_info, ingredients, allergens,
-                            is_active, created_at, updated_at
-                        ) VALUES (
-                            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, NOW(), NOW()
-                        ) RETURNING id, name, category, price
-                    `, [
-                        product.nacategory, subcategory, image, barcode,
+                            name, category, subcategory, image, barcode,
                             old_price, discount_percentage,
                             is_active, created_at, updated_at
                         ) VALUES (
@@ -229,6 +220,13 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                         product.price,
                         product.stock_quantity,
                         product.expiry_date
+                    ]);
+                    
+                    imported.push({
+                        id: productId,
+                        name: product.name,
+                        category: product.category
+                    });
                 } catch (err) {
                     console.error('Error importing product:', product.name, err);
                     importErrors.push({
@@ -303,7 +301,16 @@ router.get('/bulk-import/template', (req, res) => {
                 'الفرع': 1,
                 'الكميه': 200,
                 'الصورة': 'https://i.imgur.com/xyz789.jpg',
-                'تاريخ الصلاحيه': '2026-06-30'_sheet(workbook, worksheet, 'Products');
+                'تاريخ الصلاحيه': '2026-06-30'
+            }
+        ];
+        
+        // Create worksheet
+        const worksheet = xlsx.utils.json_to_sheet(templateData);
+        
+        // Create workbook
+        const workbook = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(workbook, worksheet, 'Products');
         
         // Generate buffer
         const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
