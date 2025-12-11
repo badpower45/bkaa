@@ -157,11 +157,13 @@ router.post('/', validate(orderSchema), async (req, res) => {
         
         console.log('✅ Order created successfully! ID:', orderId, 'Code:', returnedOrderCode);
 
-        res.status(200).send({ 
+        res.status(200).json({ 
             message: "Order created", 
-            orderId: orderId,
-            id: orderId,
-            orderCode: returnedOrderCode
+            data: {
+                id: orderId,
+                orderId: orderId,
+                orderCode: returnedOrderCode
+            }
         });
     } catch (err) {
         await query('ROLLBACK');
