@@ -149,6 +149,10 @@ app.use('/api/home-sections', homeSectionsRoutes);
 app.use('/api/addresses', addressesRoutes);
 app.use('/api/loyalty', loyaltyRoutes);
 
+// Image Upload Route
+import uploadRoutes from './routes/upload.js';
+app.use('/api/upload', uploadRoutes);
+
 // Add CORS headers to all responses as backup
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
