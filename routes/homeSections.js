@@ -44,7 +44,7 @@ router.get('/', async (req, res) => {
                             bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
                         FROM products p
                         LEFT JOIN branch_products bp ON p.id = bp.product_id
-                        WHERE p.category = $1
+                        WHERE TRIM(LOWER(p.category)) = TRIM(LOWER($1))
                     `;
 
                     const params = [section.category];
@@ -57,12 +57,13 @@ router.get('/', async (req, res) => {
                     productsQuery += ` ORDER BY p.id DESC LIMIT $${params.length + 1}`;
                     params.push(section.max_products || 8);
 
+                    console.log(`🔎 Searching for category: "${section.category}" (case-insensitive, trimmed)`);
                     console.log(`🔎 Query params:`, params);
                     const productsResult = await query(productsQuery, params);
                     
                     console.log(`✅ Found ${productsResult?.rows?.length || 0} products for category "${section.category}"`);
                     if (productsResult?.rows?.length > 0) {
-                        console.log(`📦 Sample product category:`, productsResult.rows[0].category);
+                        console.log(`📦 Sample product:`, { id: productsResult.rows[0].id, name: productsResult.rows[0].name, category: productsResult.rows[0].category });
                     }
 
                     return {
