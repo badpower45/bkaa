@@ -61,7 +61,51 @@ router.post('/dev/seed-sample', async (req, res) => {
 
 // Get all products (filtered by branch)
 router.get('/', async (req, res) => {
-    const { branchId, category, search, limit } = req.query;
+    const { branchId, category, search, limit, includeAllBranches } = req.query;
+
+    // For admin panel - show all products with their branch data
+    if (includeAllBranches === 'true') {
+        try {
+            let sql = `
+                SELECT DISTINCT ON (p.id) p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, 
+                       p.is_organic, p.is_new, p.barcode, p.shelf_location, p.subcategory, p.description,
+                       bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id
+                FROM products p
+                LEFT JOIN branch_products bp ON p.id = bp.product_id
+                WHERE 1=1
+            `;
+            const params = [];
+            let paramIndex = 1;
+
+            if (category && category !== 'All') {
+                sql += ` AND p.category = $${paramIndex}`;
+                params.push(category);
+                paramIndex++;
+            }
+
+            if (search) {
+                sql += ` AND (p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`;
+                params.push(`%${search}%`);
+                paramIndex++;
+            }
+            
+            sql += ` ORDER BY p.id, bp.branch_id NULLS LAST`;
+            
+            if (limit) {
+                sql += ` LIMIT $${paramIndex}`;
+                params.push(parseInt(limit));
+            }
+
+            const { rows } = await query(sql, params);
+            return res.json({
+                "message": "success",
+                "data": rows
+            });
+        } catch (err) {
+            console.error("Error fetching all products:", err);
+            return res.status(500).json({ "error": err.message });
+        }
+    }
 
     if (!branchId) {
         // Enforce branch selection as per requirements
@@ -225,26 +269,28 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
             shelfLocation || null
         ]);
 
-        // Add to branch inventory if price provided
-        if (price && branchId) {
-            const bpSql = `
-                INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
-                VALUES ($1, $2, $3, $4, $5, $6, TRUE)
-                ON CONFLICT (branch_id, product_id) DO UPDATE SET
-                    price = EXCLUDED.price,
-                    discount_price = EXCLUDED.discount_price,
-                    stock_quantity = EXCLUDED.stock_quantity,
-                    expiry_date = EXCLUDED.expiry_date
-            `;
-            await query(bpSql, [
-                branchId,
-                id,
-                price,
-                originalPrice || null, // السعر قبل (الأصلي) يُخزن في discount_price
-                stockQuantity || 0,
-                expiryDate || null
-            ]);
-        }
+        // Add to branch inventory - always add to at least branch 1
+        const targetBranchId = branchId || 1; // Default to branch 1 if not specified
+        const targetPrice = price || 0; // Default price to 0 if not provided
+        
+        const bpSql = `
+            INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
+            VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+            ON CONFLICT (branch_id, product_id) DO UPDATE SET
+                price = EXCLUDED.price,
+                discount_price = EXCLUDED.discount_price,
+                stock_quantity = EXCLUDED.stock_quantity,
+                expiry_date = EXCLUDED.expiry_date,
+                is_available = EXCLUDED.is_available
+        `;
+        await query(bpSql, [
+            targetBranchId,
+            id,
+            targetPrice,
+            originalPrice || null, // السعر قبل (الأصلي) يُخزن في discount_price
+            stockQuantity || 0,
+            expiryDate || null
+        ]);
 
         await query('COMMIT');
 
