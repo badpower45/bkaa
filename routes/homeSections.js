@@ -32,6 +32,11 @@ router.get('/', async (req, res) => {
                 try {
                     console.log(`🔍 Fetching products for section "${section.section_name_ar}" - Category: ${section.category}, Max: ${section.max_products}`);
                     
+                    // First, check what categories exist in products table
+                    const categoriesCheckQuery = `SELECT DISTINCT category FROM products LIMIT 20`;
+                    const categoriesCheck = await query(categoriesCheckQuery);
+                    console.log(`📊 Available categories in products table:`, categoriesCheck.rows.map(r => r.category));
+                    
                     let productsQuery = `
                         SELECT DISTINCT ON (p.id) 
                             p.id, p.name, p.category, p.image, p.rating, p.reviews,
@@ -52,9 +57,13 @@ router.get('/', async (req, res) => {
                     productsQuery += ` ORDER BY p.id DESC LIMIT $${params.length + 1}`;
                     params.push(section.max_products || 8);
 
+                    console.log(`🔎 Query params:`, params);
                     const productsResult = await query(productsQuery, params);
                     
                     console.log(`✅ Found ${productsResult?.rows?.length || 0} products for category "${section.category}"`);
+                    if (productsResult?.rows?.length > 0) {
+                        console.log(`📦 Sample product category:`, productsResult.rows[0].category);
+                    }
 
                     return {
                         ...section,
