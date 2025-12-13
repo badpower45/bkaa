@@ -25,9 +25,10 @@ const poolConfig = connectionString
     ? {
         connectionString,
         ssl: { rejectUnauthorized: false }, // Required for Supabase
-        max: 10, // Max connections
-        idleTimeoutMillis: 30000, // Close idle connections after 30s
-        connectionTimeoutMillis: 10000, // Connection timeout 10s
+        max: 2, // REDUCED: Max 2 connections for Vercel serverless
+        min: 0, // No minimum connections
+        idleTimeoutMillis: 10000, // Close idle connections after 10s (faster)
+        connectionTimeoutMillis: 5000, // Connection timeout 5s (faster)
     }
     : {
         user: process.env.DB_USER || 'postgres',
@@ -98,6 +99,29 @@ testConnection();
 
 // Helper function to query the database
 export const query = (text, params) => pool.query(text, params);
+
+// Graceful shutdown - close all connections
+export const closePool = async () => {
+    try {
+        await pool.end();
+        console.log('✅ Database pool closed successfully');
+    } catch (err) {
+        console.error('❌ Error closing database pool:', err);
+    }
+};
+
+// Handle process termination
+process.on('SIGTERM', async () => {
+    console.log('🔴 SIGTERM received, closing database connections...');
+    await closePool();
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    console.log('🔴 SIGINT received, closing database connections...');
+    await closePool();
+    process.exit(0);
+});
 
 // Export the pool for direct access if needed
 export default pool;
