@@ -59,6 +59,70 @@ router.post('/dev/seed-sample', async (req, res) => {
     }
 });
 
+// Fix products with missing or zero prices in branch_products
+router.post('/dev/fix-prices', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        // Find products without branch_products entries
+        const missingQuery = `
+            SELECT p.id, p.name, p.barcode 
+            FROM products p
+            LEFT JOIN branch_products bp ON p.id = bp.product_id
+            WHERE bp.product_id IS NULL
+        `;
+        const { rows: missingProducts } = await query(missingQuery);
+        
+        // Find products with zero prices
+        const zeroPriceQuery = `
+            SELECT p.id, p.name, p.barcode, bp.branch_id
+            FROM products p
+            JOIN branch_products bp ON p.id = bp.product_id
+            WHERE bp.price = 0 OR bp.price IS NULL
+        `;
+        const { rows: zeroProducts } = await query(zeroPriceQuery);
+        
+        console.log(`\ud83d\udd27 Found ${missingProducts.length} products without branch entries`);
+        console.log(`\ud83d\udd27 Found ${zeroProducts.length} products with zero/null prices`);
+        
+        await query('BEGIN');
+        
+        // Add missing products to branch 1 with default price of 10
+        for (const product of missingProducts) {
+            await query(`
+                INSERT INTO branch_products (branch_id, product_id, price, stock_quantity, is_available)
+                VALUES (1, $1, 10.00, 10, TRUE)
+                ON CONFLICT (branch_id, product_id) DO NOTHING
+            `, [product.id]);
+        }
+        
+        // Update zero prices to 10
+        for (const product of zeroProducts) {
+            await query(`
+                UPDATE branch_products 
+                SET price = 10.00, stock_quantity = COALESCE(stock_quantity, 10)
+                WHERE product_id = $1 AND branch_id = $2
+            `, [product.id, product.branch_id]);
+        }
+        
+        await query('COMMIT');
+        
+        return res.json({ 
+            message: 'Prices fixed successfully',
+            fixed: {
+                addedToBranch: missingProducts.length,
+                updatedPrices: zeroProducts.length
+            },
+            details: {
+                missing: missingProducts.map(p => ({ id: p.id, name: p.name })),
+                zeroPrice: zeroProducts.map(p => ({ id: p.id, name: p.name }))
+            }
+        });
+    } catch (err) {
+        await query('ROLLBACK');
+        console.error('Fix prices failed', err);
+        return res.status(500).json({ error: 'Fix prices failed: ' + err.message });
+    }
+});
+
 // Get all products (filtered by branch)
 router.get('/', async (req, res) => {
     const { branchId, category, search, limit, includeAllBranches } = req.query;
@@ -207,41 +271,81 @@ router.get('/barcode/:barcode', async (req, res) => {
     const { branchId } = req.query;
 
     try {
-        let sql, params;
         const targetBranchId = branchId || 1; // Default to branch 1
 
-        sql = `
+        // First try to get product with specified branch
+        let sql = `
             SELECT p.*, 
-                   COALESCE(bp.price, 0) as price, 
+                   bp.price, 
                    bp.discount_price, 
-                   COALESCE(bp.stock_quantity, 0) as stock_quantity, 
-                   COALESCE(bp.is_available, true) as is_available,
+                   bp.stock_quantity, 
+                   bp.is_available,
                    bp.branch_id
             FROM products p
             LEFT JOIN branch_products bp ON p.id = bp.product_id AND bp.branch_id = $2
             WHERE p.barcode = $1
         `;
-        params = [barcode, targetBranchId];
-
-        const { rows } = await query(sql, params);
-        const row = rows[0];
         
-        // Debug log
-        if (row) {
-            console.log(`📦 Product found by barcode ${barcode}:`, {
-                id: row.id,
-                name: row.name,
-                price: row.price,
-                discount_price: row.discount_price,
-                stock_quantity: row.stock_quantity,
-                branch_id: row.branch_id
-            });
-        } else {
+        const { rows } = await query(sql, [barcode, targetBranchId]);
+        let row = rows[0];
+        
+        if (!row) {
             console.log(`❌ Product not found with barcode: ${barcode}`);
+            return res.json({
+                "message": "not found",
+                "data": null
+            });
         }
 
+        // If product found but no price (not in branch_products for this branch)
+        // Try to get price from ANY branch as fallback
+        if (!row.price || row.price === 0 || row.price === null) {
+            console.log(`⚠️ Product ${row.id} found but no price for branch ${targetBranchId}, trying other branches...`);
+            
+            const fallbackSql = `
+                SELECT bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id
+                FROM branch_products bp
+                WHERE bp.product_id = $1 AND bp.price > 0
+                ORDER BY bp.branch_id
+                LIMIT 1
+            `;
+            
+            const { rows: fallbackRows } = await query(fallbackSql, [row.id]);
+            
+            if (fallbackRows.length > 0) {
+                const fallbackData = fallbackRows[0];
+                row.price = fallbackData.price;
+                row.discount_price = fallbackData.discount_price;
+                row.stock_quantity = fallbackData.stock_quantity;
+                row.is_available = fallbackData.is_available;
+                row.branch_id = fallbackData.branch_id;
+                
+                console.log(`✅ Found price from branch ${fallbackData.branch_id}: ${fallbackData.price}`);
+            } else {
+                console.log(`❌ No price found in any branch for product ${row.id}`);
+                // Set defaults
+                row.price = 0;
+                row.stock_quantity = 0;
+                row.is_available = false;
+            }
+        }
+        
+        // Ensure numeric values
+        row.price = Number(row.price) || 0;
+        row.discount_price = row.discount_price ? Number(row.discount_price) : null;
+        row.stock_quantity = Number(row.stock_quantity) || 0;
+        
+        console.log(`📦 Product returned for barcode ${barcode}:`, {
+            id: row.id,
+            name: row.name,
+            price: row.price,
+            discount_price: row.discount_price,
+            stock_quantity: row.stock_quantity,
+            branch_id: row.branch_id
+        });
+
         res.json({
-            "message": row ? "success" : "not found",
+            "message": "success",
             "data": row
         });
     } catch (err) {
@@ -257,6 +361,21 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
         name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
         price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation 
     } = req.body;
+    
+    // Validation
+    if (!name || name.trim() === '') {
+        return res.status(400).json({ 
+            error: 'اسم المنتج مطلوب',
+            message: 'يجب إدخال اسم المنتج'
+        });
+    }
+    
+    if (!price || Number(price) <= 0) {
+        return res.status(400).json({ 
+            error: 'السعر مطلوب ويجب أن يكون أكبر من صفر',
+            message: 'يرجى إدخال سعر صحيح للمنتج (يجب أن يكون أكبر من 0)'
+        });
+    }
     
     // ID generation: keep using timestamp or UUID. Schema says TEXT.
     const id = Date.now().toString();
@@ -309,9 +428,20 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
 
         await query('COMMIT');
 
+        console.log(`✅ Product created successfully:`, {
+            id,
+            name,
+            price: targetPrice,
+            branchId: targetBranchId
+        });
+
         res.json({
             "message": "success",
-            "data": rows[0]
+            "data": {
+                ...rows[0],
+                price: targetPrice,
+                branch_id: targetBranchId
+            }
         });
     } catch (err) {
         await query('ROLLBACK');
