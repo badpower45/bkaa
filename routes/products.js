@@ -208,22 +208,37 @@ router.get('/barcode/:barcode', async (req, res) => {
 
     try {
         let sql, params;
+        const targetBranchId = branchId || 1; // Default to branch 1
 
-        if (branchId) {
-            sql = `
-                SELECT p.*, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
-                FROM products p
-                LEFT JOIN branch_products bp ON p.id = bp.product_id AND bp.branch_id = $2
-                WHERE p.barcode = $1
-            `;
-            params = [barcode, branchId];
-        } else {
-            sql = "SELECT * FROM products WHERE barcode = $1";
-            params = [barcode];
-        }
+        sql = `
+            SELECT p.*, 
+                   COALESCE(bp.price, 0) as price, 
+                   bp.discount_price, 
+                   COALESCE(bp.stock_quantity, 0) as stock_quantity, 
+                   COALESCE(bp.is_available, true) as is_available,
+                   bp.branch_id
+            FROM products p
+            LEFT JOIN branch_products bp ON p.id = bp.product_id AND bp.branch_id = $2
+            WHERE p.barcode = $1
+        `;
+        params = [barcode, targetBranchId];
 
         const { rows } = await query(sql, params);
         const row = rows[0];
+        
+        // Debug log
+        if (row) {
+            console.log(`📦 Product found by barcode ${barcode}:`, {
+                id: row.id,
+                name: row.name,
+                price: row.price,
+                discount_price: row.discount_price,
+                stock_quantity: row.stock_quantity,
+                branch_id: row.branch_id
+            });
+        } else {
+            console.log(`❌ Product not found with barcode: ${barcode}`);
+        }
 
         res.json({
             "message": row ? "success" : "not found",
