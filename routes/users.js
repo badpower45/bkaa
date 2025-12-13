@@ -65,7 +65,7 @@ router.get('/profile', verifyToken, async (req, res) => {
     try {
         const userId = req.userId || req.user?.userId || req.user?.id;
         const { rows } = await query(
-            "SELECT id, name, email, role, loyalty_points, created_at FROM users WHERE id = $1",
+            "SELECT id, name, email, phone, role, loyalty_points, avatar, created_at FROM users WHERE id = $1",
             [userId]
         );
         
@@ -78,12 +78,76 @@ router.get('/profile', verifyToken, async (req, res) => {
             id: user.id,
             name: user.name,
             email: user.email,
+            phone: user.phone,
             role: user.role,
+            avatar: user.avatar,
             loyalty_points: user.loyalty_points || 0,
             created_at: user.created_at
         });
     } catch (err) {
         res.status(400).json({ error: err.message });
+    }
+});
+
+// Update Current User Profile
+router.put('/profile', verifyToken, async (req, res) => {
+    try {
+        const userId = req.userId || req.user?.userId || req.user?.id;
+        const { name, email, phone, avatar } = req.body;
+        
+        const updates = [];
+        const values = [];
+        let paramCount = 1;
+
+        if (name !== undefined) {
+            updates.push(`name = $${paramCount++}`);
+            values.push(name);
+        }
+        if (email !== undefined) {
+            updates.push(`email = $${paramCount++}`);
+            values.push(email);
+        }
+        if (phone !== undefined) {
+            updates.push(`phone = $${paramCount++}`);
+            values.push(phone);
+        }
+        if (avatar !== undefined) {
+            updates.push(`avatar = $${paramCount++}`);
+            values.push(avatar);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ success: false, error: "No fields to update" });
+        }
+
+        values.push(userId);
+        const sql = `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING id, name, email, phone, role, loyalty_points, avatar`;
+        
+        const { rows } = await query(sql, values);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, error: "User not found" });
+        }
+
+        res.json({
+            success: true,
+            message: "Profile updated successfully",
+            data: {
+                id: rows[0].id,
+                name: rows[0].name,
+                email: rows[0].email,
+                phone: rows[0].phone,
+                role: rows[0].role,
+                avatar: rows[0].avatar,
+                loyaltyPoints: rows[0].loyalty_points
+            }
+        });
+    } catch (err) {
+        console.error('Error updating profile:', err);
+        if (err.code === '23505') {
+            return res.status(400).json({ success: false, error: "Email already exists" });
+        }
+        res.status(400).json({ success: false, error: err.message });
     }
 });
 
