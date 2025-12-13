@@ -108,8 +108,16 @@ app.use(cors({
             callback(new Error('Not allowed by CORS'));
         }
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'apikey'],
+    exposedHeaders: ['Content-Length', 'Content-Type'],
+    maxAge: 86400 // 24 hours
 }));
+
+// Handle preflight requests explicitly
+app.options('*', cors());
+
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -140,6 +148,15 @@ app.use('/api/products', bulkImportRoutes);
 app.use('/api/home-sections', homeSectionsRoutes);
 app.use('/api/addresses', addressesRoutes);
 app.use('/api/loyalty', loyaltyRoutes);
+
+// Add CORS headers to all responses as backup
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, apikey');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    next();
+});
 
 // Health check endpoint (moved under /api for serverless route consistency)
 app.get('/api/health', (req, res) => {
