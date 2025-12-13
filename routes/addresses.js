@@ -7,7 +7,7 @@ const router = express.Router();
 // Get all addresses for a user
 router.get('/', authenticateToken, async (req, res) => {
     try {
-        const userId = req.query.userId || req.user.id;
+        const userId = req.query.userId || req.userId || req.user?.id;
         const result = await db.query(
             'SELECT * FROM addresses WHERE user_id = $1 ORDER BY is_default DESC, created_at DESC',
             [userId]
@@ -34,7 +34,7 @@ router.post('/', authenticateToken, async (req, res) => {
             is_default
         } = req.body;
 
-        const userId = user_id || req.user.id;
+        const userId = user_id || req.userId || req.user?.id;
 
         // If this is set as default, unset all other defaults for this user
         if (is_default) {
@@ -75,9 +75,10 @@ router.put('/:id', authenticateToken, async (req, res) => {
         } = req.body;
 
         // Verify address belongs to user
+        const userId = req.userId || req.user?.id;
         const checkResult = await db.query(
             'SELECT * FROM addresses WHERE id = $1 AND user_id = $2',
-            [id, req.user.id]
+            [id, userId]
         );
 
         if (checkResult.rows.length === 0) {
@@ -88,7 +89,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
         if (is_default) {
             await db.query(
                 'UPDATE addresses SET is_default = false WHERE user_id = $1',
-                [req.user.id]
+                [userId]
             );
         }
 
@@ -112,11 +113,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
+        const userId = req.userId || req.user?.id;
 
         // Verify address belongs to user
         const checkResult = await db.query(
             'SELECT * FROM addresses WHERE id = $1 AND user_id = $2',
-            [id, req.user.id]
+            [id, userId]
         );
 
         if (checkResult.rows.length === 0) {
@@ -135,11 +137,12 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 router.put('/:id/set-default', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
+        const userId = req.userId || req.user?.id;
 
         // Verify address belongs to user
         const checkResult = await db.query(
             'SELECT * FROM addresses WHERE id = $1 AND user_id = $2',
-            [id, req.user.id]
+            [id, userId]
         );
 
         if (checkResult.rows.length === 0) {
@@ -149,7 +152,7 @@ router.put('/:id/set-default', authenticateToken, async (req, res) => {
         // Unset all defaults for this user
         await db.query(
             'UPDATE addresses SET is_default = false WHERE user_id = $1',
-            [req.user.id]
+            [userId]
         );
 
         // Set this one as default

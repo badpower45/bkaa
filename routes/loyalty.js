@@ -7,7 +7,7 @@ const router = express.Router();
 // Get loyalty transactions for a user
 router.get('/transactions', authenticateToken, async (req, res) => {
     try {
-        const userId = req.query.userId || req.user.id;
+        const userId = req.query.userId || req.userId || req.user?.id;
         const result = await db.query(
             `SELECT * FROM loyalty_points_history 
             WHERE user_id = $1 
@@ -25,7 +25,7 @@ router.get('/transactions', authenticateToken, async (req, res) => {
 // Get user's current loyalty points
 router.get('/balance', authenticateToken, async (req, res) => {
     try {
-        const userId = req.query.userId || req.user.id;
+        const userId = req.query.userId || req.userId || req.user?.id;
         const result = await db.query(
             'SELECT loyalty_points FROM users WHERE id = $1',
             [userId]

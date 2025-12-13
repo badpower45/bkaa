@@ -19,9 +19,13 @@ export const verifyToken = (req, res, next) => {
         // Save to request for use in other routes
         req.userId = decoded.id;
         req.userRole = decoded.role;
+        req.user = { id: decoded.id, userId: decoded.id, role: decoded.role };
         next();
     });
 };
+
+// Alias for verifyToken - used by newer routes
+export const authenticateToken = verifyToken;
 
 // Optional authentication - doesn't reject if no token, just doesn't set userId
 export const optionalAuth = (req, res, next) => {

@@ -63,9 +63,10 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
 // Get Current User Profile (must be before /:id route)
 router.get('/profile', verifyToken, async (req, res) => {
     try {
+        const userId = req.userId || req.user?.userId || req.user?.id;
         const { rows } = await query(
             "SELECT id, name, email, role, loyalty_points, created_at FROM users WHERE id = $1",
-            [req.user.userId]
+            [userId]
         );
         
         if (rows.length === 0) {
