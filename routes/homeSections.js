@@ -52,10 +52,10 @@ router.get('/', async (req, res) => {
             })
         );
 
-        res.json(sectionsWithProducts);
+        res.json({ data: sectionsWithProducts });
     } catch (error) {
         console.error('Error fetching home sections:', error);
-        res.status(500).json({ error: 'Failed to fetch home sections' });
+        res.status(500).json({ error: 'Failed to fetch home sections', data: [] });
     }
 });
 
