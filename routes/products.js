@@ -464,7 +464,7 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
 // Update Product (Admin only)
 router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
     const { 
-        name, category, subcategory, image, weight, description, barcode, isOrganic, isNew, isWeighted,
+        name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
         price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation 
     } = req.body;
     
@@ -482,15 +482,14 @@ router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
                 barcode = COALESCE($7, barcode),
                 is_organic = COALESCE($8, is_organic),
                 is_new = COALESCE($9, is_new),
-                is_weighted = COALESCE($10, is_weighted),
-                shelf_location = COALESCE($11, shelf_location)
-            WHERE id = $12
+                shelf_location = COALESCE($10, shelf_location)
+            WHERE id = $11
             RETURNING *
         `;
         
         const { rows } = await query(sql, [
             name, category, subcategory, image, weight, description, barcode,
-            isOrganic, isNew, isWeighted, shelfLocation, req.params.id
+            isOrganic, isNew, shelfLocation, req.params.id
         ]);
 
         if (rows.length === 0) {
