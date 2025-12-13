@@ -255,6 +255,17 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
     } catch (err) {
         await query('ROLLBACK');
         console.error("Error creating product:", err);
+        
+        // Handle duplicate barcode error
+        if (err.code === '23505' && err.constraint === 'products_barcode_key') {
+            return res.status(400).json({ 
+                error: 'الباركود موجود بالفعل',
+                errorCode: 'DUPLICATE_BARCODE',
+                barcode: barcode,
+                message: `المنتج بالباركود ${barcode} موجود بالفعل. يرجى استخدام باركود مختلف أو تعديل المنتج الموجود.`
+            });
+        }
+        
         res.status(400).json({ "error": err.message });
     }
 });
