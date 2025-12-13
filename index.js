@@ -30,6 +30,8 @@ import facebookReelsRoutes from './routes/facebook_reels.js';
 import brandOffersRoutes from './routes/brandOffers.js';
 import bulkImportRoutes from './routes/bulkImport.js';
 import homeSectionsRoutes from './routes/homeSections.js';
+import addressesRoutes from './routes/addresses.js';
+import loyaltyRoutes from './routes/loyalty.js';
 
 // dotenv is loaded in database.js with the correct path
 // No need to load it again here
@@ -136,6 +138,8 @@ app.use('/api/facebook-reels', facebookReelsRoutes);
 app.use('/api/brand-offers', brandOffersRoutes);
 app.use('/api/products', bulkImportRoutes);
 app.use('/api/home-sections', homeSectionsRoutes);
+app.use('/api/addresses', addressesRoutes);
+app.use('/api/loyalty', loyaltyRoutes);
 
 // Health check endpoint (moved under /api for serverless route consistency)
 app.get('/api/health', (req, res) => {

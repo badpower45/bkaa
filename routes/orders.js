@@ -431,10 +431,19 @@ router.put('/:id/status', [verifyToken, isAdmin], async (req, res) => {
         if (status === 'delivered' && order.status !== 'delivered') {
             const points = Math.floor(Number(order.total) || 0);
             if (points > 0 && order.user_id) {
+                // Update user's loyalty points
                 await query(
                     "UPDATE users SET loyalty_points = COALESCE(loyalty_points, 0) + $1 WHERE id = $2",
                     [points, order.user_id]
                 );
+                
+                // Create loyalty points history record
+                await query(
+                    `INSERT INTO loyalty_points_history (user_id, order_id, points, type, description)
+                    VALUES ($1, $2, $3, 'earned', $4)`,
+                    [order.user_id, orderId, points, `نقاط من طلب رقم ${orderId}`]
+                );
+                
                 console.log(`Awarded ${points} loyalty points to user ${order.user_id} for order ${orderId}`);
             }
         }

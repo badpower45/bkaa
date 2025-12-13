@@ -60,6 +60,32 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
     }
 });
 
+// Get Current User Profile (must be before /:id route)
+router.get('/profile', verifyToken, async (req, res) => {
+    try {
+        const { rows } = await query(
+            "SELECT id, name, email, role, loyalty_points, created_at FROM users WHERE id = $1",
+            [req.user.userId]
+        );
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        const user = rows[0];
+        res.json({
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            loyalty_points: user.loyalty_points || 0,
+            created_at: user.created_at
+        });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
 // Get Single User (Admin or self)
 router.get('/:id', verifyToken, async (req, res) => {
     try {
