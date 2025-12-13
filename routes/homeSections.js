@@ -10,7 +10,7 @@ router.get('/', async (req, res) => {
     try {
         const branchId = req.query.branchId;
 
-        // Get all active home sections
+        // Check if home_sections table exists and has data
         const sectionsResult = await query(
             `SELECT * FROM home_sections 
              WHERE is_active = true 
@@ -18,44 +18,59 @@ router.get('/', async (req, res) => {
             []
         );
 
-        const sections = sectionsResult.rows;
+        const sections = sectionsResult?.rows || [];
+        
+        // If no sections, return empty array
+        if (sections.length === 0) {
+            console.log('No active home sections found');
+            return res.json({ data: [] });
+        }
 
         // For each section, get products from that category
         const sectionsWithProducts = await Promise.all(
             sections.map(async (section) => {
-                let productsQuery = `
-                    SELECT DISTINCT ON (p.id) 
-                        p.id, p.name, p.category, p.image, p.rating, p.reviews,
-                        p.is_organic, p.is_new, p.description, p.weight,
-                        bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
-                    FROM products p
-                    LEFT JOIN branch_products bp ON p.id = bp.product_id
-                    WHERE p.category = $1
-                `;
+                try {
+                    let productsQuery = `
+                        SELECT DISTINCT ON (p.id) 
+                            p.id, p.name, p.category, p.image, p.rating, p.reviews,
+                            p.is_organic, p.is_new, p.description, p.weight,
+                            bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
+                        FROM products p
+                        LEFT JOIN branch_products bp ON p.id = bp.product_id
+                        WHERE p.category = $1
+                    `;
 
-                const params = [section.category];
+                    const params = [section.category];
 
-                if (branchId) {
-                    productsQuery += ` AND bp.branch_id = $2 AND bp.is_available = true`;
-                    params.push(branchId);
+                    if (branchId) {
+                        productsQuery += ` AND bp.branch_id = $2 AND bp.is_available = true`;
+                        params.push(branchId);
+                    }
+
+                    productsQuery += ` LIMIT $${params.length + 1}`;
+                    params.push(section.max_products || 8);
+
+                    const productsResult = await query(productsQuery, params);
+
+                    return {
+                        ...section,
+                        products: productsResult?.rows || []
+                    };
+                } catch (err) {
+                    console.error(`Error fetching products for section ${section.id}:`, err);
+                    return {
+                        ...section,
+                        products: []
+                    };
                 }
-
-                productsQuery += ` LIMIT $${params.length + 1}`;
-                params.push(section.max_products || 8);
-
-                const productsResult = await query(productsQuery, params);
-
-                return {
-                    ...section,
-                    products: productsResult.rows
-                };
             })
         );
 
         res.json({ data: sectionsWithProducts });
     } catch (error) {
         console.error('Error fetching home sections:', error);
-        res.status(500).json({ error: 'Failed to fetch home sections', data: [] });
+        console.error('Error stack:', error.stack);
+        res.status(500).json({ error: 'Failed to fetch home sections', message: error.message, data: [] });
     }
 });
 
