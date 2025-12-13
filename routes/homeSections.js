@@ -37,6 +37,7 @@ router.get('/', async (req, res) => {
                     const categoriesCheck = await query(categoriesCheckQuery);
                     console.log(`📊 Available categories in products table:`, categoriesCheck.rows.map(r => r.category));
                     
+                    // Try multiple variations to find the matching category
                     let productsQuery = `
                         SELECT DISTINCT ON (p.id) 
                             p.id, p.name, p.category, p.image, p.rating, p.reviews,
@@ -44,20 +45,25 @@ router.get('/', async (req, res) => {
                             bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
                         FROM products p
                         LEFT JOIN branch_products bp ON p.id = bp.product_id
-                        WHERE TRIM(LOWER(p.category)) = TRIM(LOWER($1))
+                        WHERE (
+                            p.category = $1 
+                            OR TRIM(LOWER(p.category)) = TRIM(LOWER($1))
+                            OR p.category LIKE $1
+                            OR p.category LIKE '%' || $1 || '%'
+                        )
                     `;
 
                     const params = [section.category];
 
                     if (branchId) {
-                        productsQuery += ` AND bp.branch_id = $2 AND bp.is_available = true`;
+                        productsQuery += ` AND bp.branch_id = $${params.length + 1} AND bp.is_available = true`;
                         params.push(branchId);
                     }
 
                     productsQuery += ` ORDER BY p.id DESC LIMIT $${params.length + 1}`;
                     params.push(section.max_products || 8);
 
-                    console.log(`🔎 Searching for category: "${section.category}" (case-insensitive, trimmed)`);
+                    console.log(`🔎 Searching for category: "${section.category}" with multiple matching strategies`);
                     console.log(`🔎 Query params:`, params);
                     const productsResult = await query(productsQuery, params);
                     
