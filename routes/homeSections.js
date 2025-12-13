@@ -30,10 +30,12 @@ router.get('/', async (req, res) => {
         const sectionsWithProducts = await Promise.all(
             sections.map(async (section) => {
                 try {
+                    console.log(`🔍 Fetching products for section "${section.section_name_ar}" - Category: ${section.category}, Max: ${section.max_products}`);
+                    
                     let productsQuery = `
                         SELECT DISTINCT ON (p.id) 
                             p.id, p.name, p.category, p.image, p.rating, p.reviews,
-                            p.is_organic, p.is_new, p.description, p.weight,
+                            p.is_organic, p.is_new, p.description, p.weight, p.barcode,
                             bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
                         FROM products p
                         LEFT JOIN branch_products bp ON p.id = bp.product_id
@@ -47,17 +49,19 @@ router.get('/', async (req, res) => {
                         params.push(branchId);
                     }
 
-                    productsQuery += ` LIMIT $${params.length + 1}`;
+                    productsQuery += ` ORDER BY p.id DESC LIMIT $${params.length + 1}`;
                     params.push(section.max_products || 8);
 
                     const productsResult = await query(productsQuery, params);
+                    
+                    console.log(`✅ Found ${productsResult?.rows?.length || 0} products for category "${section.category}"`);
 
                     return {
                         ...section,
                         products: productsResult?.rows || []
                     };
                 } catch (err) {
-                    console.error(`Error fetching products for section ${section.id}:`, err);
+                    console.error(`❌ Error fetching products for section ${section.id}:`, err);
                     return {
                         ...section,
                         products: []
@@ -65,6 +69,8 @@ router.get('/', async (req, res) => {
                 }
             })
         );
+        
+        console.log(`📦 Returning ${sectionsWithProducts.length} sections with products`);
 
         res.json({ data: sectionsWithProducts });
     } catch (error) {
