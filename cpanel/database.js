@@ -17,7 +17,7 @@ const normalizeConnectionString = (raw) => {
     if (!raw) return raw;
     if (raw.includes('sslmode=')) return raw;
     const separator = raw.includes('?') ? '&' : '?';
-    return `${raw}${separator}sslmode=require`;
+    return `${raw}${separator}sslmode=no-verify`;
 };
 
 const connectionString = normalizeConnectionString(process.env.DATABASE_URL);

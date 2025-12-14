@@ -20,12 +20,12 @@ console.log('  DB_PORT from env:', process.env.DB_PORT);
 // PostgreSQL Connection Pool
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Ensure sslmode=require is always present for Supabase
+// Ensure sslmode=no-verify is always present for Supabase to bypass self-signed chains
 const normalizeConnectionString = (raw) => {
     if (!raw) return raw;
     if (raw.includes('sslmode=')) return raw;
     const separator = raw.includes('?') ? '&' : '?';
-    return `${raw}${separator}sslmode=require`;
+    return `${raw}${separator}sslmode=no-verify`;
 };
 
 const connectionString = normalizeConnectionString(process.env.DATABASE_URL);

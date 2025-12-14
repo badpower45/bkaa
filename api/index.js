@@ -12,10 +12,21 @@ if (!process.env.JWT_SECRET) {
 // Initialize Express
 const app = express();
 
-// Database connection
+// Database connection (normalize sslmode to avoid self-signed chain issues)
+const normalizeConnectionString = (raw) => {
+    if (!raw) return raw;
+    if (raw.includes('sslmode=')) return raw;
+    const separator = raw.includes('?') ? '&' : '?';
+    return `${raw}${separator}sslmode=no-verify`;
+};
+
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+    connectionString: normalizeConnectionString(process.env.DATABASE_URL),
+    ssl: { rejectUnauthorized: false },
+    keepAlive: true,
+    max: 5,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
 });
 
 // Middleware
