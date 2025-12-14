@@ -24,9 +24,9 @@ const normalizeConnectionString = (raw) => {
         normalized = `${normalized}${separator}sslmode=no-verify`;
     }
     
-    // Add pgbouncer if using port 6543
-    if (normalized.includes(':6543') && !normalized.includes('pgbouncer=')) {
-        normalized = `${normalized}&pgbouncer=true`;
+    // Add prepared_statements=false for pgbouncer compatibility
+    if (normalized.includes(':6543') && !normalized.includes('prepared_statements=')) {
+        normalized = `${normalized}&prepared_statements=false`;
     }
     
     return normalized;

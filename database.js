@@ -21,7 +21,7 @@ console.log('  DB_PORT from env:', process.env.DB_PORT);
 const isProduction = process.env.NODE_ENV === 'production';
 
 // Ensure sslmode=no-verify is always present for Supabase to bypass self-signed chains
-// Also add pgbouncer=true for better pooling
+// Also add prepared_statements=false for pgbouncer compatibility
 const normalizeConnectionString = (raw) => {
     if (!raw) return raw;
     
@@ -33,9 +33,9 @@ const normalizeConnectionString = (raw) => {
         normalized = `${normalized}${separator}sslmode=no-verify`;
     }
     
-    // Add pgbouncer if using port 6543 and not already present
-    if (normalized.includes(':6543') && !normalized.includes('pgbouncer=')) {
-        normalized = `${normalized}&pgbouncer=true`;
+    // Add prepared_statements=false for pgbouncer (Transaction Mode requires this)
+    if (normalized.includes(':6543') && !normalized.includes('prepared_statements=')) {
+        normalized = `${normalized}&prepared_statements=false`;
     }
     
     return normalized;
