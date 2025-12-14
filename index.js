@@ -163,11 +163,30 @@ app.use((req, res, next) => {
 });
 
 // Health check endpoint (moved under /api for serverless route consistency)
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+    const { query: dbQuery } = await import('./database.js');
+    let dbStatus = 'unknown';
+    let dbError = null;
+    
+    try {
+        const result = await dbQuery('SELECT NOW() as time');
+        dbStatus = 'connected';
+    } catch (err) {
+        dbStatus = 'error';
+        dbError = err.message;
+    }
+    
     res.status(200).json({ 
         status: 'ok', 
         timestamp: new Date().toISOString(),
-        environment: NODE_ENV
+        environment: NODE_ENV,
+        database: {
+            status: dbStatus,
+            error: dbError,
+            hasConnectionString: !!process.env.DATABASE_URL,
+            host: process.env.DB_HOST ? 'set' : 'not set',
+            port: process.env.DB_PORT || 'not set'
+        }
     });
 });
 
