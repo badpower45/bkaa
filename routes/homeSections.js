@@ -38,6 +38,7 @@ router.get('/', async (req, res) => {
                     console.log(`📊 Available categories in products table:`, categoriesCheck.rows.map(r => r.category));
                     
                     // Try multiple variations to find the matching category
+                    // Match against both products.category and categories.name/name_ar
                     let productsQuery = `
                         SELECT DISTINCT ON (p.id) 
                             p.id, p.name, p.category, p.image, p.rating, p.reviews,
@@ -45,11 +46,16 @@ router.get('/', async (req, res) => {
                             bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
                         FROM products p
                         LEFT JOIN branch_products bp ON p.id = bp.product_id
+                        LEFT JOIN categories c ON (p.category = c.name OR p.category = c.name_ar)
                         WHERE (
                             p.category = $1 
                             OR TRIM(LOWER(p.category)) = TRIM(LOWER($1))
                             OR p.category LIKE $1
                             OR p.category LIKE '%' || $1 || '%'
+                            OR c.name = $1
+                            OR c.name_ar = $1
+                            OR TRIM(LOWER(c.name)) = TRIM(LOWER($1))
+                            OR TRIM(LOWER(c.name_ar)) = TRIM(LOWER($1))
                         )
                     `;
 
@@ -65,11 +71,20 @@ router.get('/', async (req, res) => {
 
                     console.log(`🔎 Searching for category: "${section.category}" with multiple matching strategies`);
                     console.log(`🔎 Query params:`, params);
+                    console.log(`🔎 SQL Query:`, productsQuery.replace(/\s+/g, ' ').trim());
+                    
                     const productsResult = await query(productsQuery, params);
                     
                     console.log(`✅ Found ${productsResult?.rows?.length || 0} products for category "${section.category}"`);
                     if (productsResult?.rows?.length > 0) {
-                        console.log(`📦 Sample product:`, { id: productsResult.rows[0].id, name: productsResult.rows[0].name, category: productsResult.rows[0].category });
+                        console.log(`📦 Sample product:`, { 
+                            id: productsResult.rows[0].id, 
+                            name: productsResult.rows[0].name, 
+                            category: productsResult.rows[0].category,
+                            price: productsResult.rows[0].price 
+                        });
+                    } else {
+                        console.warn(`⚠️ No products found for category "${section.category}" - Check if category name matches exactly`);
                     }
 
                     return {
