@@ -55,7 +55,13 @@ if (connectionString) {
     console.log('  SSL:', poolConfig.ssl ? 'Enabled' : 'Disabled');
 }
 
-const pool = new Pool(poolConfig);
+const pool = new Pool({
+    ...poolConfig,
+    max: 1,
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 5000,
+    allowExitOnIdle: true,
+});
 
 // Handle pool errors
 pool.on('error', (err, client) => {

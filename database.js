@@ -34,11 +34,13 @@ const poolConfig = connectionString
     ? {
         connectionString,
         ssl: { rejectUnauthorized: false }, // Required for Supabase
-        keepAlive: true, // Keep TCP alive to reduce unexpected terminations
-        max: 5, // Small pool for serverless/limited egress
-        min: 0, // No minimum connections
-        idleTimeoutMillis: 30000, // Close idle connections after 30s
-        connectionTimeoutMillis: 10000, // Connection timeout 10s
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10000,
+        max: 1, // ⚠️ CRITICAL for serverless: Only 1 connection
+        min: 0,
+        idleTimeoutMillis: 10000, // Close idle connections quickly
+        connectionTimeoutMillis: 5000,
+        allowExitOnIdle: true, // Allow pool to close when idle
     }
     : {
         user: process.env.DB_USER || 'postgres',
@@ -47,9 +49,10 @@ const poolConfig = connectionString
         password: process.env.DB_PASSWORD || 'postgres',
         port: process.env.DB_PORT || 5432,
         ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
-        max: 10,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
+        max: 1,
+        idleTimeoutMillis: 10000,
+        connectionTimeoutMillis: 5000,
+        allowExitOnIdle: true,
     };
 
 console.log('🔌 Attempting to connect to database...');
@@ -84,8 +87,8 @@ process.on('uncaughtException', (err) => {
     // but for now, just log and continue
 });
 
-// Test the connection with retry
-const testConnection = async (retries = 3) => {
+// Test the connection with retry (non-blocking for serverless)
+const testConnection = async (retries = 2) => {
     for (let i = 0; i < retries; i++) {
         try {
             const client = await pool.connect();
@@ -96,19 +99,46 @@ const testConnection = async (retries = 3) => {
         } catch (err) {
             console.error(`❌ Connection attempt ${i + 1}/${retries} failed:`, err.message);
             if (i < retries - 1) {
-                console.log('⏳ Retrying in 2 seconds...');
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                console.log('⏳ Retrying in 1 second...');
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
     }
-    console.error('❌ Could not connect to database after', retries, 'attempts');
+    console.error('⚠️ Initial connection failed - will retry on first query');
     return false;
 };
 
-testConnection();
+// Don't await - run in background to avoid blocking serverless startup
+if (!isProduction) {
+    testConnection();
+}
 
-// Helper function to query the database
-export const query = (text, params) => pool.query(text, params);
+// Helper function with automatic retry
+export const query = async (text, params, retries = 2) => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const result = await pool.query(text, params);
+            return result;
+        } catch (err) {
+            const shouldRetry = (
+                (err.code === 'ECONNRESET' || 
+                 err.code === 'ETIMEDOUT' ||
+                 err.code === 'XX000' || // Circuit breaker
+                 err.message?.includes('Connection terminated') ||
+                 err.message?.includes('Circuit breaker') ||
+                 err.message?.includes('connection timeout')) &&
+                attempt < retries
+            );
+            
+            if (shouldRetry) {
+                console.log(`🔄 Query retry ${attempt + 1}/${retries} after error:`, err.message);
+                await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+                continue;
+            }
+            throw err;
+        }
+    }
+};
 
 // Graceful shutdown - close all connections
 export const closePool = async () => {
