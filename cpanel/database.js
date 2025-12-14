@@ -13,12 +13,20 @@ console.log('  DB_USER from env:', process.env.DB_USER);
 console.log('  DB_PORT from env:', process.env.DB_PORT);
 
 // PostgreSQL Connection Pool - Supabase
-const connectionString = process.env.DATABASE_URL;
+const normalizeConnectionString = (raw) => {
+    if (!raw) return raw;
+    if (raw.includes('sslmode=')) return raw;
+    const separator = raw.includes('?') ? '&' : '?';
+    return `${raw}${separator}sslmode=require`;
+};
+
+const connectionString = normalizeConnectionString(process.env.DATABASE_URL);
 
 const poolConfig = connectionString
     ? {
         connectionString,
         ssl: { rejectUnauthorized: false }, // Required for Supabase
+        keepAlive: true,
         max: 10,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 10000,

@@ -19,16 +19,26 @@ console.log('  DB_PORT from env:', process.env.DB_PORT);
 
 // PostgreSQL Connection Pool
 const isProduction = process.env.NODE_ENV === 'production';
-const connectionString = process.env.DATABASE_URL;
+
+// Ensure sslmode=require is always present for Supabase
+const normalizeConnectionString = (raw) => {
+    if (!raw) return raw;
+    if (raw.includes('sslmode=')) return raw;
+    const separator = raw.includes('?') ? '&' : '?';
+    return `${raw}${separator}sslmode=require`;
+};
+
+const connectionString = normalizeConnectionString(process.env.DATABASE_URL);
 
 const poolConfig = connectionString
     ? {
         connectionString,
         ssl: { rejectUnauthorized: false }, // Required for Supabase
-        max: 2, // REDUCED: Max 2 connections for Vercel serverless
+        keepAlive: true, // Keep TCP alive to reduce unexpected terminations
+        max: 5, // Small pool for serverless/limited egress
         min: 0, // No minimum connections
-        idleTimeoutMillis: 10000, // Close idle connections after 10s (faster)
-        connectionTimeoutMillis: 5000, // Connection timeout 5s (faster)
+        idleTimeoutMillis: 30000, // Close idle connections after 30s
+        connectionTimeoutMillis: 10000, // Connection timeout 10s
     }
     : {
         user: process.env.DB_USER || 'postgres',
