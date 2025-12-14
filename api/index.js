@@ -24,10 +24,32 @@ const pool = new Pool({
     connectionString: normalizeConnectionString(process.env.DATABASE_URL),
     ssl: { rejectUnauthorized: false },
     keepAlive: true,
-    max: 5,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    keepAliveInitialDelayMillis: 10000,
+    max: 1, // ⚠️ Vercel serverless needs minimal connections
+    min: 0,
+    idleTimeoutMillis: 10000, // Close connections quickly in serverless
+    connectionTimeoutMillis: 5000,
+    allowExitOnIdle: true, // Allow pool to close when idle
 });
+
+// Handle pool errors
+pool.on('error', (err, client) => {
+    console.error('❌ Unexpected pool error:', err.message);
+    // Don't crash - pool will handle reconnection
+});
+
+// Test connection on startup (non-blocking)
+(async () => {
+    try {
+        const client = await pool.connect();
+        await client.query('SELECT NOW()');
+        client.release();
+        console.log('✅ Database connected successfully');
+    } catch (err) {
+        console.error('⚠️ Database connection warning:', err.message);
+        // Don't crash - continue anyway, queries will retry
+    }
+})();
 
 // Middleware
 app.use(cors({
@@ -45,8 +67,29 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// Helper
-const query = (text, params) => pool.query(text, params);
+// Helper with retry logic
+const query = async (text, params, retries = 2) => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const result = await pool.query(text, params);
+            return result;
+        } catch (err) {
+            // Connection errors that should be retried
+            if (
+                (err.code === 'ECONNRESET' || 
+                 err.code === 'ETIMEDOUT' || 
+                 err.message.includes('Connection terminated') ||
+                 err.message.includes('connection timeout')) &&
+                attempt < retries
+            ) {
+                console.log(`🔄 Retry ${attempt + 1}/${retries} for query after connection error`);
+                await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+                continue;
+            }
+            throw err;
+        }
+    }
+};
 
 // Auth middleware
 const verifyToken = (req, res, next) => {
