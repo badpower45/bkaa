@@ -21,11 +21,24 @@ console.log('  DB_PORT from env:', process.env.DB_PORT);
 const isProduction = process.env.NODE_ENV === 'production';
 
 // Ensure sslmode=no-verify is always present for Supabase to bypass self-signed chains
+// Also add pgbouncer=true for better pooling
 const normalizeConnectionString = (raw) => {
     if (!raw) return raw;
-    if (raw.includes('sslmode=')) return raw;
-    const separator = raw.includes('?') ? '&' : '?';
-    return `${raw}${separator}sslmode=no-verify`;
+    
+    let normalized = raw;
+    
+    // Add sslmode if not present
+    if (!normalized.includes('sslmode=')) {
+        const separator = normalized.includes('?') ? '&' : '?';
+        normalized = `${normalized}${separator}sslmode=no-verify`;
+    }
+    
+    // Add pgbouncer if using port 6543 and not already present
+    if (normalized.includes(':6543') && !normalized.includes('pgbouncer=')) {
+        normalized = `${normalized}&pgbouncer=true`;
+    }
+    
+    return normalized;
 };
 
 const connectionString = normalizeConnectionString(process.env.DATABASE_URL);
@@ -33,14 +46,15 @@ const connectionString = normalizeConnectionString(process.env.DATABASE_URL);
 const poolConfig = connectionString
     ? {
         connectionString,
-        ssl: { rejectUnauthorized: false }, // Required for Supabase
+        ssl: { rejectUnauthorized: false },
         keepAlive: true,
-        keepAliveInitialDelayMillis: 10000,
-        max: 1, // ⚠️ CRITICAL for serverless: Only 1 connection
+        keepAliveInitialDelayMillis: 0, // Start keepalive immediately
+        max: 1, // ⚠️ CRITICAL for serverless
         min: 0,
-        idleTimeoutMillis: 10000, // Close idle connections quickly
-        connectionTimeoutMillis: 5000,
-        allowExitOnIdle: true, // Allow pool to close when idle
+        idleTimeoutMillis: 20000, // Keep alive longer (20s)
+        connectionTimeoutMillis: 10000, // Longer timeout (10s)
+        allowExitOnIdle: true,
+        statement_timeout: 10000, // Query timeout
     }
     : {
         user: process.env.DB_USER || 'postgres',
@@ -50,8 +64,8 @@ const poolConfig = connectionString
         port: process.env.DB_PORT || 5432,
         ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
         max: 1,
-        idleTimeoutMillis: 10000,
-        connectionTimeoutMillis: 5000,
+        idleTimeoutMillis: 20000,
+        connectionTimeoutMillis: 10000,
         allowExitOnIdle: true,
     };
 

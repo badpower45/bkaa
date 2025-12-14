@@ -15,21 +15,34 @@ const app = express();
 // Database connection (normalize sslmode to avoid self-signed chain issues)
 const normalizeConnectionString = (raw) => {
     if (!raw) return raw;
-    if (raw.includes('sslmode=')) return raw;
-    const separator = raw.includes('?') ? '&' : '?';
-    return `${raw}${separator}sslmode=no-verify`;
+    
+    let normalized = raw;
+    
+    // Add sslmode if not present
+    if (!normalized.includes('sslmode=')) {
+        const separator = normalized.includes('?') ? '&' : '?';
+        normalized = `${normalized}${separator}sslmode=no-verify`;
+    }
+    
+    // Add pgbouncer if using port 6543
+    if (normalized.includes(':6543') && !normalized.includes('pgbouncer=')) {
+        normalized = `${normalized}&pgbouncer=true`;
+    }
+    
+    return normalized;
 };
 
 const pool = new Pool({
     connectionString: normalizeConnectionString(process.env.DATABASE_URL),
     ssl: { rejectUnauthorized: false },
     keepAlive: true,
-    keepAliveInitialDelayMillis: 10000,
-    max: 1, // ⚠️ Vercel serverless needs minimal connections
+    keepAliveInitialDelayMillis: 0,
+    max: 1,
     min: 0,
-    idleTimeoutMillis: 10000, // Close connections quickly in serverless
-    connectionTimeoutMillis: 5000,
-    allowExitOnIdle: true, // Allow pool to close when idle
+    idleTimeoutMillis: 20000,
+    connectionTimeoutMillis: 10000,
+    allowExitOnIdle: true,
+    statement_timeout: 10000,
 });
 
 // Handle pool errors
@@ -68,22 +81,36 @@ app.use(express.json());
 const JWT_SECRET = process.env.JWT_SECRET;
 
 // Helper with retry logic
-const query = async (text, params, retries = 2) => {
+const query = async (text, params, retries = 3) => {
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
             const result = await pool.query(text, params);
             return result;
         } catch (err) {
             // Connection errors that should be retried
-            if (
+            const shouldRetry = (
                 (err.code === 'ECONNRESET' || 
                  err.code === 'ETIMEDOUT' || 
-                 err.message.includes('Connection terminated') ||
-                 err.message.includes('connection timeout')) &&
+                 err.code === 'XX000' || // Circuit breaker
+                 err.code === '57P01' || // Connection terminated
+                 err.message?.includes('Connection terminated') ||
+                 err.message?.includes('Circuit breaker') ||
+                 err.message?.includes('connection timeout') ||
+                 err.message?.includes('upstream database')) &&
                 attempt < retries
-            ) {
-                console.log(`🔄 Retry ${attempt + 1}/${retries} for query after connection error`);
-                await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+            );
+            
+            if (shouldRetry) {
+                console.log(`🔄 Retry ${attempt + 1}/${retries} for query after: ${err.message}`);
+                // Exponential backoff
+                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+                
+                // Try to reset pool connection
+                try {
+                    await pool.query('SELECT 1');
+                } catch (resetErr) {
+                    console.log('Pool reset failed, continuing...');
+                }
                 continue;
             }
             throw err;
