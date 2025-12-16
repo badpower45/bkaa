@@ -135,17 +135,80 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
         }
         
         console.log('Processing Excel file:', req.file.originalname);
+        console.log('File size:', req.file.size, 'bytes');
+        console.log('File mimetype:', req.file.mimetype);
         
         // Read Excel file
         const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
-        const sheetName = workbook.SheetNames[0];
+        
+        if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+            return res.status(400).json({ error: 'لا يوجد أوراق في ملف Excel' });
+        }
+        
+        console.log('Available sheets:', workbook.SheetNames);
+        
+        // Try to find "Products" sheet first, otherwise use first sheet with data
+        let sheetName = workbook.SheetNames.find(name => 
+            name.toLowerCase() === 'products' || 
+            name.toLowerCase() === 'منتجات' ||
+            name.toLowerCase() === 'sheet1'
+        );
+        
+        // If no specific sheet found, find first sheet with actual data
+        if (!sheetName) {
+            for (const name of workbook.SheetNames) {
+                const testSheet = workbook.Sheets[name];
+                const testRows = xlsx.utils.sheet_to_json(testSheet);
+                if (testRows.length > 0) {
+                    sheetName = name;
+                    break;
+                }
+            }
+        }
+        
+        // Fallback to first sheet
+        if (!sheetName) {
+            sheetName = workbook.SheetNames[0];
+        }
+        
+        console.log('Using sheet:', sheetName);
         const worksheet = workbook.Sheets[sheetName];
         
-        // Convert to JSON
+        // Get the range to check if sheet has data
+        const range = xlsx.utils.decode_range(worksheet['!ref'] || 'A1');
+        const hasData = range.e.r > 0; // Check if there are rows beyond header
+        
+        console.log('Sheet range:', worksheet['!ref']);
+        console.log('Has data beyond header:', hasData);
+        
+        // Convert to JSON - include header even if empty
         const rows = xlsx.utils.sheet_to_json(worksheet, { defval: null });
         
+        console.log('Parsed rows:', rows.length);
+        
         if (rows.length === 0) {
-            return res.status(400).json({ error: 'Excel file is empty' });
+            // Check if headers exist
+            const headers = xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0];
+            console.log('Headers found:', headers);
+            
+            // Check if there are other sheets with data
+            const otherSheetsWithData = workbook.SheetNames.filter(name => {
+                const sheet = workbook.Sheets[name];
+                const testRows = xlsx.utils.sheet_to_json(sheet);
+                return testRows.length > 0;
+            });
+            
+            let suggestionMsg = '';
+            if (otherSheetsWithData.length > 0) {
+                suggestionMsg = ` - تم العثور على بيانات في: ${otherSheetsWithData.join(', ')}. تأكد من استخدام الورقة الصحيحة.`;
+            }
+            
+            return res.status(400).json({ 
+                error: `ملف Excel فارغ - الورقة "${sheetName}" لا تحتوي على بيانات${suggestionMsg}`,
+                details: headers ? 'تم العثور على عناوين الأعمدة فقط، لكن لا توجد بيانات. تأكد من إضافة صفوف البيانات تحت الـ Headers.' : 'الملف فارغ تماماً',
+                availableSheets: workbook.SheetNames,
+                sheetsWithData: otherSheetsWithData
+            });
         }
         
         console.log(`Found ${rows.length} rows in Excel`);
