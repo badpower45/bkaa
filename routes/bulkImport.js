@@ -2,8 +2,14 @@ import express from 'express';
 import multer from 'multer';
 import * as xlsx from 'xlsx';
 import { v4 as uuidv4 } from 'uuid';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { query } from '../database.js';
 import { verifyToken, isAdmin } from '../middleware/auth.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 
@@ -517,6 +523,40 @@ router.delete('/drafts/:id', [verifyToken, isAdmin], async (req, res) => {
     } catch (err) {
         console.error('Error deleting draft:', err);
         res.status(500).json({ error: 'Failed to delete draft product' });
+    }
+});
+
+// POST /api/products/setup-draft-table - Setup draft_products table (run migration)
+router.post('/setup-draft-table', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        console.log('Setting up draft_products table...');
+        
+        // Read migration file
+        const migrationPath = path.join(__dirname, '..', 'migrations', 'add_draft_products_table.sql');
+        const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+
+        // Execute migration
+        await query(migrationSQL);
+        
+        // Verify table exists
+        const result = await query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'draft_products'
+            );
+        `);
+
+        res.json({
+            success: true,
+            message: 'Draft products table setup completed',
+            tableExists: result.rows[0].exists
+        });
+    } catch (err) {
+        console.error('Error setting up draft table:', err);
+        res.status(500).json({ 
+            error: 'Failed to setup draft table',
+            message: err.message 
+        });
     }
 });
 
