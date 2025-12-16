@@ -1,6 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import * as xlsx from 'xlsx';
+import { v4 as uuidv4 } from 'uuid';
 import { query } from '../database.js';
 import { verifyToken, isAdmin } from '../middleware/auth.js';
 
@@ -56,31 +57,34 @@ function findColumnValue(row, possibleNames) {
     return null;
 }
 
-// Extract and map data from row
+// Extract and map data from row (FLEXIBLE - allows partial data)
 function mapRowToProduct(row, rowIndex) {
     const product = {};
     const errors = [];
+    const warnings = [];
     
-    // All 10 fields are required
+    // Required fields (but we'll be flexible)
     const allFields = [
         'name', 'barcode', 'old_price', 'price', 'category', 
         'subcategory', 'branch_id', 'stock_quantity', 'image', 'expiry_date'
     ];
     
+    // Extract all available fields
     for (const field of allFields) {
         const value = findColumnValue(row, COLUMN_MAPPING[field]);
-        if (!value && value !== 0) {
-            errors.push(`Missing required field: ${field}`);
-        } else {
+        if (value || value === 0) {
             product[field] = value;
+        } else {
+            // Just warn, don't fail
+            warnings.push(`Missing field: ${field}`);
         }
     }
     
-    // Validation
+    // Basic validation (very lenient)
     if (product.price) {
         const priceNum = parseFloat(product.price);
-        if (isNaN(priceNum) || priceNum <= 0) {
-            errors.push('السعر بعد غير صحيح - يجب أن يكون رقم أكبر من صفر');
+        if (isNaN(priceNum) || priceNum < 0) {
+            errors.push('السعر بعد غير صحيح - يجب أن يكون رقم');
         } else {
             product.price = priceNum;
         }
@@ -89,7 +93,8 @@ function mapRowToProduct(row, rowIndex) {
     if (product.old_price) {
         const oldPriceNum = parseFloat(product.old_price);
         if (isNaN(oldPriceNum) || oldPriceNum < 0) {
-            errors.push('السعر قبل غير صحيح - يجب أن يكون رقم');
+            warnings.push('السعر قبل غير صحيح');
+            product.old_price = null;
         } else {
             product.old_price = oldPriceNum;
         }
@@ -98,7 +103,8 @@ function mapRowToProduct(row, rowIndex) {
     if (product.stock_quantity) {
         const stockNum = parseInt(product.stock_quantity);
         if (isNaN(stockNum) || stockNum < 0) {
-            errors.push('الكمية غير صحيحة - يجب أن تكون رقم صحيح');
+            warnings.push('الكمية غير صحيحة');
+            product.stock_quantity = 0;
         } else {
             product.stock_quantity = stockNum;
         }
@@ -107,14 +113,11 @@ function mapRowToProduct(row, rowIndex) {
     if (product.branch_id) {
         const branchNum = parseInt(product.branch_id);
         if (isNaN(branchNum) || branchNum <= 0) {
-            errors.push('معرف الفرع غير صحيح - يجب أن يكون رقم أكبر من صفر');
+            warnings.push('معرف الفرع غير صحيح');
+            product.branch_id = 1; // Default branch
         } else {
             product.branch_id = branchNum;
         }
-    }
-    
-    if (product.image && !product.image.startsWith('http') && !product.image.startsWith('data:')) {
-        errors.push('رابط الصورة غير صحيح - يجب أن يبدأ بـ http:// أو https://');
     }
     
     // Calculate discount percentage
@@ -124,7 +127,7 @@ function mapRowToProduct(row, rowIndex) {
         product.discount_percentage = 0;
     }
     
-    return { product, errors, rowIndex };
+    return { product, errors, warnings, rowIndex };
 }
 
 // POST /api/products/bulk-import - Import products from Excel
@@ -213,87 +216,77 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
         
         console.log(`Found ${rows.length} rows in Excel`);
         
-        // Parse and validate all rows
-        const validProducts = [];
-        const failedRows = [];
+        // Generate batch ID for this import
+        const batchId = uuidv4();
+        const userId = req.user?.id || null;
+        
+        // Parse and save ALL rows as drafts (flexible approach)
+        const savedDrafts = [];
+        const parseErrors = [];
         
         rows.forEach((row, index) => {
-            const { product, errors, rowIndex } = mapRowToProduct(row, index + 2); // +2 for Excel row number (header + 1-indexed)
+            const { product, errors, warnings, rowIndex } = mapRowToProduct(row, index + 2);
             
-            if (errors.length > 0) {
-                failedRows.push({
-                    row: rowIndex,
-                    data: row,
-                    errors: errors
-                });
-            } else {
-                validProducts.push(product);
-            }
+            // Save even if there are warnings - we'll let user fix them later
+            savedDrafts.push({
+                product,
+                warnings,
+                errors,
+                rowIndex
+            });
         });
         
-        console.log(`Valid products: ${validProducts.length}, Failed: ${failedRows.length}`);
+        console.log(`Parsed ${savedDrafts.length} products, preparing to save as drafts...`);
         
-        // Import valid products
+        // Save all as draft products
         const imported = [];
         const importErrors = [];
         
         await query('BEGIN');
         
         try {
-            for (const product of validProducts) {
+            for (const { product, warnings, errors } of savedDrafts) {
                 try {
-                    // Insert into products table
-                    const { rows: insertedProduct } = await query(`
-                        INSERT INTO products (
+                    // Insert into draft_products table (accepting incomplete data)
+                    const { rows: insertedDraft } = await query(`
+                        INSERT INTO draft_products (
                             name, category, subcategory, image, barcode,
-                            old_price, discount_percentage,
-                            is_active, created_at, updated_at
+                            old_price, price, discount_percentage,
+                            branch_id, stock_quantity, expiry_date,
+                            status, import_batch_id, imported_by,
+                            validation_errors, created_at, updated_at
                         ) VALUES (
-                            $1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW()
-                        ) RETURNING id, name, category
+                            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                            $12, $13, $14, $15, NOW(), NOW()
+                        ) RETURNING id, name, category, status
                     `, [
-                        product.name,
-                        product.category,
-                        product.subcategory,
-                        product.image,
-                        product.barcode,
-                        product.old_price,
-                        product.discount_percentage
-                    ]);
-                    
-                    const productId = insertedProduct[0].id;
-                    
-                    // Insert into branch_products table
-                    await query(`
-                        INSERT INTO branch_products (
-                            branch_id, product_id, price, stock_quantity, 
-                            expiry_date, is_available, created_at, updated_at
-                        ) VALUES (
-                            $1, $2, $3, $4, $5, true, NOW(), NOW()
-                        )
-                        ON CONFLICT (branch_id, product_id) 
-                        DO UPDATE SET 
-                            price = EXCLUDED.price,
-                            stock_quantity = EXCLUDED.stock_quantity,
-                            expiry_date = EXCLUDED.expiry_date,
-                            updated_at = NOW()
-                    `, [
-                        product.branch_id,
-                        productId,
-                        product.price,
-                        product.stock_quantity,
-                        product.expiry_date
+                        product.name || 'منتج بدون اسم',
+                        product.category || null,
+                        product.subcategory || null,
+                        product.image || null,
+                        product.barcode || null,
+                        product.old_price || null,
+                        product.price || null,
+                        product.discount_percentage || 0,
+                        product.branch_id || 1,
+                        product.stock_quantity || 0,
+                        product.expiry_date || null,
+                        errors.length > 0 ? 'draft' : 'validated',
+                        batchId,
+                        userId,
+                        JSON.stringify({ errors, warnings })
                     ]);
                     
                     imported.push({
-                        id: productId,
-                        name: product.name,
-                        category: product.category
+                        id: insertedDraft[0].id,
+                        name: insertedDraft[0].name,
+                        category: insertedDraft[0].category,
+                        status: insertedDraft[0].status
                     });
                 } catch (err) {
-                    console.error('Error importing product:', product.name, err);
+                    console.error('Error saving draft product:', product.name, err);
                     importErrors.push({
-                        name: product.name,
+                        name: product.name || 'Unknown',
                         error: err.message
                     });
                 }
@@ -301,17 +294,19 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
             
             await query('COMMIT');
             
-            console.log(`Successfully imported ${imported.length} products`);
+            console.log(`Successfully saved ${imported.length} products as drafts`);
             
             res.json({
                 success: true,
-                message: `Successfully imported ${imported.length} products`,
+                message: `تم حفظ ${imported.length} منتج كمسودات. يمكنك الآن مراجعتها وتعديلها قبل النشر.`,
                 imported: imported.length,
-                failed: failedRows.length + importErrors.length,
+                failed: importErrors.length,
                 total: rows.length,
+                batchId: batchId,
+                redirectTo: `/admin/draft-products/${batchId}`,
                 details: {
                     imported: imported,
-                    validationErrors: failedRows,
+                    validationErrors: [],
                     importErrors: importErrors
                 }
             });
@@ -327,6 +322,201 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
             error: 'Failed to import products',
             message: err.message 
         });
+    }
+});
+
+// GET /api/products/drafts - Get all draft products
+router.get('/drafts', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { batchId } = req.query;
+        
+        let queryText = `
+            SELECT * FROM draft_products
+            WHERE 1=1
+        `;
+        const params = [];
+        
+        if (batchId) {
+            queryText += ` AND import_batch_id = $1`;
+            params.push(batchId);
+        }
+        
+        queryText += ` ORDER BY created_at DESC`;
+        
+        const { rows } = await query(queryText, params);
+        
+        res.json({
+            success: true,
+            drafts: rows
+        });
+    } catch (err) {
+        console.error('Error fetching drafts:', err);
+        res.status(500).json({ error: 'Failed to fetch draft products' });
+    }
+});
+
+// GET /api/products/drafts/:id - Get single draft product
+router.get('/drafts/:id', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { rows } = await query('SELECT * FROM draft_products WHERE id = $1', [id]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Draft product not found' });
+        }
+        
+        res.json({
+            success: true,
+            draft: rows[0]
+        });
+    } catch (err) {
+        console.error('Error fetching draft:', err);
+        res.status(500).json({ error: 'Failed to fetch draft product' });
+    }
+});
+
+// PUT /api/products/drafts/:id - Update draft product
+router.put('/drafts/:id', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { id } = req.params;
+        const updates = req.body;
+        
+        // Build update query dynamically
+        const allowedFields = [
+            'name', 'category', 'subcategory', 'image', 'barcode',
+            'old_price', 'price', 'discount_percentage',
+            'branch_id', 'stock_quantity', 'expiry_date', 'status', 'notes'
+        ];
+        
+        const setClause = [];
+        const values = [];
+        let paramCounter = 1;
+        
+        for (const field of allowedFields) {
+            if (updates[field] !== undefined) {
+                setClause.push(`${field} = $${paramCounter}`);
+                values.push(updates[field]);
+                paramCounter++;
+            }
+        }
+        
+        if (setClause.length === 0) {
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+        
+        setClause.push(`updated_at = NOW()`);
+        values.push(id);
+        
+        const queryText = `
+            UPDATE draft_products
+            SET ${setClause.join(', ')}
+            WHERE id = $${paramCounter}
+            RETURNING *
+        `;
+        
+        const { rows } = await query(queryText, values);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Draft product not found' });
+        }
+        
+        res.json({
+            success: true,
+            draft: rows[0]
+        });
+    } catch (err) {
+        console.error('Error updating draft:', err);
+        res.status(500).json({ error: 'Failed to update draft product' });
+    }
+});
+
+// POST /api/products/drafts/:id/publish - Publish draft to products
+router.post('/drafts/:id/publish', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Use the database function to publish
+        const { rows } = await query('SELECT * FROM publish_draft_product($1)', [id]);
+        
+        if (!rows[0].success) {
+            return res.status(400).json({ error: rows[0].message });
+        }
+        
+        res.json({
+            success: true,
+            message: 'Product published successfully',
+            productId: rows[0].product_id
+        });
+    } catch (err) {
+        console.error('Error publishing draft:', err);
+        res.status(500).json({ error: 'Failed to publish product' });
+    }
+});
+
+// POST /api/products/drafts/batch/publish - Publish multiple drafts
+router.post('/drafts/batch/publish', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { draftIds } = req.body;
+        
+        if (!Array.isArray(draftIds) || draftIds.length === 0) {
+            return res.status(400).json({ error: 'No draft IDs provided' });
+        }
+        
+        const results = [];
+        
+        await query('BEGIN');
+        
+        for (const draftId of draftIds) {
+            try {
+                const { rows } = await query('SELECT * FROM publish_draft_product($1)', [draftId]);
+                results.push({
+                    draftId,
+                    success: rows[0].success,
+                    productId: rows[0].product_id,
+                    message: rows[0].message
+                });
+            } catch (err) {
+                results.push({
+                    draftId,
+                    success: false,
+                    error: err.message
+                });
+            }
+        }
+        
+        await query('COMMIT');
+        
+        const successCount = results.filter(r => r.success).length;
+        
+        res.json({
+            success: true,
+            message: `Published ${successCount} of ${draftIds.length} products`,
+            results
+        });
+    } catch (err) {
+        await query('ROLLBACK');
+        console.error('Error batch publishing:', err);
+        res.status(500).json({ error: 'Failed to publish products' });
+    }
+});
+
+// DELETE /api/products/drafts/:id - Delete draft product
+router.delete('/drafts/:id', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { rows } = await query('DELETE FROM draft_products WHERE id = $1 RETURNING id', [id]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Draft product not found' });
+        }
+        
+        res.json({
+            success: true,
+            message: 'Draft product deleted'
+        });
+    } catch (err) {
+        console.error('Error deleting draft:', err);
+        res.status(500).json({ error: 'Failed to delete draft product' });
     }
 });
 
