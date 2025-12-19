@@ -1,7 +1,6 @@
 import express from 'express';
 import { query } from '../database.js';
 import { verifyToken, isAdmin } from '../middleware/auth.js';
-import { deductPointsForReturn } from './loyalty.js';
 
 const router = express.Router();
 
@@ -200,13 +199,40 @@ router.post('/admin/approve/:id', [verifyToken, isAdmin], async (req, res) => {
         
         // Deduct loyalty points
         if (returnData.points_to_deduct > 0) {
-            const deductResult = await deductPointsForReturn(
-                returnData.order_id,
-                returnData.user_id
-            );
-            
-            if (!deductResult.success) {
-                console.error('Failed to deduct points:', deductResult.error);
+            try {
+                // Get current balance
+                const userResult = await query(
+                    'SELECT loyalty_points FROM users WHERE id = $1',
+                    [returnData.user_id]
+                );
+                const currentBalance = userResult.rows[0]?.loyalty_points || 0;
+                
+                // Deduct points (but not below 0)
+                const deduction = Math.min(returnData.points_to_deduct, currentBalance);
+                
+                await query(
+                    'UPDATE users SET loyalty_points = loyalty_points - $1 WHERE id = $2',
+                    [deduction, returnData.user_id]
+                );
+                
+                // Create transaction record if loyalty_transactions table exists
+                try {
+                    await query(`
+                        INSERT INTO loyalty_transactions (
+                            user_id, order_id, points, transaction_type, description,
+                            balance_before, balance_after
+                        ) VALUES ($1, $2, $3, 'refund', $4, $5, $6)
+                    `, [
+                        returnData.user_id, returnData.order_id, -deduction,
+                        `خصم ${deduction} نقطة بسبب إرجاع الطلب #${returnData.order_id}`,
+                        currentBalance, currentBalance - deduction
+                    ]);
+                } catch (err) {
+                    // Table might not exist, continue anyway
+                    console.log('Loyalty transactions table not available:', err.message);
+                }
+            } catch (err) {
+                console.error('Failed to deduct points:', err);
             }
         }
         
