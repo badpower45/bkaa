@@ -123,6 +123,127 @@ router.post('/validate', [verifyToken], async (req, res) => {
     }
 });
 
+// استرداد نقاط الولاء للحصول على كوبون خصم (Redeem Loyalty Points)
+router.post('/redeem', [verifyToken], async (req, res) => {
+    const { userId, pointsToRedeem, couponCode, discountValue } = req.body;
+    const requestUserId = req.userId;
+
+    // التحقق من أن المستخدم يسترد نقاطه الخاصة
+    if (parseInt(userId) !== parseInt(requestUserId)) {
+        return res.status(403).json({ 
+            success: false, 
+            message: 'غير مصرح لك باسترداد نقاط مستخدم آخر' 
+        });
+    }
+
+    // التحقق من المدخلات
+    if (!pointsToRedeem || !couponCode || !discountValue) {
+        return res.status(400).json({ 
+            success: false, 
+            message: 'البيانات غير مكتملة' 
+        });
+    }
+
+    try {
+        // البدء في معاملة
+        await query('BEGIN');
+
+        // جلب نقاط المستخدم الحالية
+        const { rows: userRows } = await query(
+            `SELECT loyalty_points FROM users WHERE id = $1 FOR UPDATE`,
+            [userId]
+        );
+
+        if (userRows.length === 0) {
+            await query('ROLLBACK');
+            return res.status(404).json({ 
+                success: false, 
+                message: 'المستخدم غير موجود' 
+            });
+        }
+
+        const currentPoints = userRows[0].loyalty_points || 0;
+
+        // التحقق من وجود نقاط كافية
+        if (currentPoints < pointsToRedeem) {
+            await query('ROLLBACK');
+            return res.status(400).json({ 
+                success: false, 
+                message: `لا تملك نقاط كافية. لديك ${currentPoints} نقطة فقط` 
+            });
+        }
+
+        // خصم النقاط من حساب المستخدم
+        await query(
+            `UPDATE users SET loyalty_points = loyalty_points - $1 WHERE id = $2`,
+            [pointsToRedeem, userId]
+        );
+
+        // إنشاء كوبون خصم
+        const validUntil = new Date();
+        validUntil.setDate(validUntil.getDate() + 30); // صالح لمدة 30 يوم
+
+        const { rows: couponRows } = await query(
+            `INSERT INTO coupons (
+                code, 
+                description, 
+                discount_type, 
+                discount_value,
+                min_order_value, 
+                max_discount, 
+                usage_limit, 
+                per_user_limit,
+                valid_until, 
+                is_active, 
+                created_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            RETURNING *`,
+            [
+                couponCode,
+                `كوبون استرداد نقاط - ${pointsToRedeem} نقطة`,
+                'fixed',
+                discountValue,
+                0, // لا يوجد حد أدنى
+                null,
+                1, // استخدام واحد فقط
+                1, // مرة واحدة لكل مستخدم
+                validUntil,
+                true,
+                userId
+            ]
+        );
+
+        // تسجيل عملية الاسترداد في جدول منفصل (اختياري)
+        await query(
+            `INSERT INTO loyalty_redemptions (user_id, points_redeemed, coupon_id, created_at)
+             VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+             ON CONFLICT DO NOTHING`,
+            [userId, pointsToRedeem, couponRows[0].id]
+        ).catch(() => {}); // تجاهل الخطأ إذا كان الجدول غير موجود
+
+        // إتمام المعاملة
+        await query('COMMIT');
+
+        res.json({ 
+            success: true, 
+            message: `تم استرداد ${pointsToRedeem} نقطة بنجاح!`,
+            coupon: couponRows[0],
+            couponCode: couponCode,
+            discountValue: discountValue,
+            remainingPoints: currentPoints - pointsToRedeem
+        });
+
+    } catch (err) {
+        await query('ROLLBACK');
+        console.error('Error redeeming loyalty points:', err);
+        res.status(500).json({ 
+            success: false, 
+            message: 'حدث خطأ أثناء استرداد النقاط',
+            error: err.message 
+        });
+    }
+});
+
 // الحصول على جميع الكوبونات (Admin only)
 router.get('/', [verifyToken], async (req, res) => {
     // التحقق من أن المستخدم أدمن

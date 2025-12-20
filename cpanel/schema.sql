@@ -243,3 +243,69 @@ CREATE INDEX IF NOT EXISTS idx_order_prep_items_order ON order_preparation_items
 ALTER TABLE order_assignments ADD COLUMN IF NOT EXISTS order_rating DECIMAL(2,1);
 ALTER TABLE order_assignments ADD COLUMN IF NOT EXISTS speed_rating DECIMAL(2,1);
 CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
+
+-- 14. Coupons Table (نظام الكوبونات)
+CREATE TABLE IF NOT EXISTS coupons (
+  id SERIAL PRIMARY KEY,
+  code VARCHAR(50) UNIQUE NOT NULL, -- كود الكوبون
+  description TEXT, -- وصف الكوبون بالعربي
+  discount_type VARCHAR(20) NOT NULL CHECK (discount_type IN ('percentage', 'fixed')), -- نوع الخصم: نسبة مئوية أو مبلغ ثابت
+  discount_value DECIMAL(10, 2) NOT NULL, -- قيمة الخصم (نسبة أو مبلغ)
+  min_order_value DECIMAL(10, 2) DEFAULT 0, -- الحد الأدنى للطلب لتطبيق الكوبون
+  max_discount DECIMAL(10, 2), -- الحد الأقصى للخصم (للنسب المئوية فقط)
+  
+  -- إعدادات الاستخدام
+  usage_limit INTEGER, -- NULL = لا نهائي، رقم = عدد محدود، 1 = استخدام واحد فقط
+  used_count INTEGER DEFAULT 0, -- عدد مرات الاستخدام الفعلي
+  per_user_limit INTEGER DEFAULT 1, -- عدد المرات لكل مستخدم (1 = مرة واحدة، NULL = لا نهائي)
+  
+  -- صلاحية الكوبون
+  valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- تاريخ بداية الصلاحية
+  valid_until TIMESTAMP, -- تاريخ انتهاء الصلاحية (NULL = لا ينتهي)
+  
+  -- حالة الكوبون
+  is_active BOOLEAN DEFAULT TRUE, -- هل الكوبون نشط
+  
+  -- معلومات إضافية
+  created_by INTEGER, -- الأدمن أو المستخدم الذي أنشأ الكوبون
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
+-- 15. Coupon Usage Table (تتبع استخدام الكوبونات)
+CREATE TABLE IF NOT EXISTS coupon_usage (
+  id SERIAL PRIMARY KEY,
+  coupon_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  order_id INTEGER NOT NULL,
+  discount_amount DECIMAL(10, 2) NOT NULL, -- المبلغ الفعلي للخصم
+  used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (coupon_id) REFERENCES coupons(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);
+
+-- 16. Loyalty Redemptions Table (تتبع استرداد نقاط الولاء)
+CREATE TABLE IF NOT EXISTS loyalty_redemptions (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  points_redeemed INTEGER NOT NULL,
+  coupon_id INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (coupon_id) REFERENCES coupons(id) ON DELETE SET NULL
+);
+
+-- Indexes for coupons and loyalty
+CREATE INDEX IF NOT EXISTS idx_coupons_code ON coupons(code);
+CREATE INDEX IF NOT EXISTS idx_coupons_active ON coupons(is_active);
+CREATE INDEX IF NOT EXISTS idx_coupons_valid ON coupons(valid_from, valid_until);
+CREATE INDEX IF NOT EXISTS idx_coupon_usage_coupon ON coupon_usage(coupon_id);
+CREATE INDEX IF NOT EXISTS idx_coupon_usage_user ON coupon_usage(user_id);
+CREATE INDEX IF NOT EXISTS idx_coupon_usage_order ON coupon_usage(order_id);
+CREATE INDEX IF NOT EXISTS idx_loyalty_redemptions_user ON loyalty_redemptions(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_coupon_usage_unique ON coupon_usage(coupon_id, order_id);
