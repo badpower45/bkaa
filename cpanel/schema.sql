@@ -9,7 +9,12 @@ CREATE TABLE IF NOT EXISTS users (
   password TEXT,
   role TEXT DEFAULT 'customer',
   default_branch_id INTEGER,
-  loyalty_points INTEGER DEFAULT 0
+  loyalty_points INTEGER DEFAULT 0,
+  is_blocked BOOLEAN DEFAULT FALSE,
+  block_reason TEXT,
+  blocked_by INTEGER,
+  blocked_at TIMESTAMP,
+  FOREIGN KEY (blocked_by) REFERENCES users(id)
 );
 
 -- 2. Branches Table
