@@ -22,6 +22,26 @@ CREATE TABLE IF NOT EXISTS branches (
   is_active BOOLEAN DEFAULT TRUE
 );
 
+-- 2.5. Brands Table - جدول البراندات
+CREATE TABLE IF NOT EXISTS brands (
+  id SERIAL PRIMARY KEY,
+  name_ar TEXT NOT NULL,
+  name_en TEXT NOT NULL,
+  slogan_ar TEXT,
+  slogan_en TEXT,
+  logo_url TEXT,
+  banner_url TEXT,
+  primary_color VARCHAR(7) DEFAULT '#F57C00',
+  secondary_color VARCHAR(7) DEFAULT '#FF9800',
+  description_ar TEXT,
+  description_en TEXT,
+  rating DECIMAL(2, 1) DEFAULT 0.0,
+  is_featured BOOLEAN DEFAULT FALSE,
+  products_count INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 3. Products Table (Refactored: No price/stock here)
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, -- Keeping TEXT to match existing IDs like '1', '2' or UUIDs
@@ -29,6 +49,7 @@ CREATE TABLE IF NOT EXISTS products (
   description TEXT,
   category TEXT,
   subcategory TEXT, -- New: Sub-category for better organization
+  brand_id INTEGER, -- ربط المنتج بالبراند
   rating DECIMAL(3, 2) DEFAULT 0,
   reviews INTEGER DEFAULT 0,
   image TEXT,
@@ -53,6 +74,10 @@ CREATE TABLE IF NOT EXISTS branch_products (
   FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
   FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
 );
+
+-- Add Foreign Key for brand_id in products
+ALTER TABLE products ADD CONSTRAINT fk_products_brand 
+  FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE SET NULL;
 
 -- 5. Cart Table
 CREATE TABLE IF NOT EXISTS cart (
@@ -134,6 +159,9 @@ CREATE INDEX IF NOT EXISTS idx_branch_products_composite ON branch_products(bran
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
 CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
+CREATE INDEX IF NOT EXISTS idx_products_brand_id ON products(brand_id);
+CREATE INDEX IF NOT EXISTS idx_brands_featured ON brands(is_featured);
+CREATE INDEX IF NOT EXISTS idx_brands_name_en ON brands(name_en);
 CREATE INDEX IF NOT EXISTS idx_delivery_slots_date ON delivery_slots(date);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
@@ -242,4 +270,45 @@ CREATE INDEX IF NOT EXISTS idx_order_prep_items_order ON order_preparation_items
 -- Add new rating columns if they don't exist
 ALTER TABLE order_assignments ADD COLUMN IF NOT EXISTS order_rating DECIMAL(2,1);
 ALTER TABLE order_assignments ADD COLUMN IF NOT EXISTS speed_rating DECIMAL(2,1);
+CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
+
+-- Triggers for brands system
+CREATE OR REPLACE FUNCTION update_brand_products_count()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'DELETE' OR (TG_OP = 'UPDATE' AND OLD.brand_id IS NOT NULL) THEN
+    UPDATE brands 
+    SET products_count = (SELECT COUNT(*) FROM products WHERE brand_id = OLD.brand_id)
+    WHERE id = OLD.brand_id;
+  END IF;
+  
+  IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND NEW.brand_id IS NOT NULL) THEN
+    UPDATE brands 
+    SET products_count = (SELECT COUNT(*) FROM products WHERE brand_id = NEW.brand_id)
+    WHERE id = NEW.brand_id;
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_update_brand_products_count ON products;
+CREATE TRIGGER trigger_update_brand_products_count
+AFTER INSERT OR UPDATE OR DELETE ON products
+FOR EACH ROW
+EXECUTE FUNCTION update_brand_products_count();
+
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = CURRENT_TIMESTAMP;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_brands_updated_at ON brands;
+CREATE TRIGGER trigger_brands_updated_at
+BEFORE UPDATE ON brands
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
 CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
