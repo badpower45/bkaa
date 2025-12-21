@@ -14,7 +14,7 @@ export const verifyToken = (req, res, next) => {
     const token = tokenHeader.split(' ')[1]; // Bearer <token>
 
     jwt.verify(token, SECRET_KEY, (err, decoded) => {
-        if (err) return res.status(500).send({ auth: false, message: 'Failed to authenticate token.' });
+        if (err) return res.status(401).send({ auth: false, message: 'Failed to authenticate token.' });
 
         // Save to request for use in other routes
         req.userId = decoded.id;
