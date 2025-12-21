@@ -33,10 +33,13 @@ import bulkImportRoutes from './routes/bulkImport.js';
 import homeSectionsRoutes from './routes/homeSections.js';
 import addressesRoutes from './routes/addresses.js';
 import loyaltyRoutes from './routes/loyalty.js';
+import loyaltyEnhancedRoutes from './routes/loyaltyEnhanced.js';
 import brandsRoutes from './routes/brands.js';
 import returnsRoutes from './routes/returns.js';
+import returnsEnhancedRoutes from './routes/returnsEnhanced.js';
 import notificationsRoutes from './routes/notifications.js';
 import adminAnalyticsRoutes from './routes/adminAnalytics.js';
+import adminEnhancedRoutes from './routes/adminEnhanced.js';
 
 // dotenv is loaded in database.js with the correct path
 // No need to load it again here
@@ -154,10 +157,13 @@ app.use('/api/products', bulkImportRoutes);
 app.use('/api/home-sections', homeSectionsRoutes);
 app.use('/api/addresses', addressesRoutes);
 app.use('/api/loyalty', loyaltyRoutes);
+app.use('/api/loyalty-enhanced', loyaltyEnhancedRoutes);
 app.use('/api/brands', brandsRoutes);
 app.use('/api/returns', returnsRoutes);
+app.use('/api/returns-enhanced', returnsEnhancedRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/admin', adminAnalyticsRoutes);
+app.use('/api/admin-enhanced', adminEnhancedRoutes);
 
 // Image Upload Route
 import uploadRoutes from './routes/upload.js';

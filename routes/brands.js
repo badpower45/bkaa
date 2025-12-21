@@ -73,27 +73,194 @@ router.get('/:id', async (req, res) => {
     }
 });
 
-// Get brand products (public)
+// Get brand categories (public)
+router.get('/:id/categories', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { branchId } = req.query;
+        
+        let sql = `
+            SELECT DISTINCT c.id, c.name_ar, c.name_en, c.icon, c.image_url,
+                   COUNT(DISTINCT p.id) as products_count
+            FROM categories c
+            INNER JOIN products p ON p.category_id = c.id
+            INNER JOIN branch_products bp ON p.id = bp.product_id
+            WHERE p.brand_id = $1 AND bp.is_available = true
+        `;
+        
+        const params = [id];
+        let paramIndex = 2;
+        
+        if (branchId) {
+            sql += ` AND bp.branch_id = $${paramIndex}`;
+            params.push(branchId);
+            paramIndex++;
+        }
+        
+        sql += ` GROUP BY c.id ORDER BY c.name_ar ASC`;
+        
+        const { rows } = await query(sql, params);
+        res.json({ data: rows, message: 'success' });
+    } catch (err) {
+        console.error('Error fetching brand categories:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get brand price range (public)
+router.get('/:id/price-range', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { branchId } = req.query;
+        
+        let sql = `
+            SELECT 
+                MIN(COALESCE(bp.discount_price, bp.price)) as min_price,
+                MAX(COALESCE(bp.discount_price, bp.price)) as max_price
+            FROM products p
+            INNER JOIN branch_products bp ON p.id = bp.product_id
+            WHERE p.brand_id = $1 AND bp.is_available = true
+        `;
+        
+        const params = [id];
+        if (branchId) {
+            sql += ` AND bp.branch_id = $2`;
+            params.push(branchId);
+        }
+        
+        const { rows } = await query(sql, params);
+        res.json({ 
+            data: {
+                min: parseFloat(rows[0].min_price) || 0,
+                max: parseFloat(rows[0].max_price) || 0
+            },
+            message: 'success' 
+        });
+    } catch (err) {
+        console.error('Error fetching brand price range:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get brand products with advanced filtering (public)
 router.get('/:id/products', async (req, res) => {
     try {
         const { id } = req.params;
-        const { rows } = await query(`
+        const { 
+            category, 
+            minPrice, 
+            maxPrice, 
+            sortBy = 'name_asc', 
+            available = 'true',
+            branchId,
+            limit,
+            offset = 0
+        } = req.query;
+        
+        let sql = `
             SELECT p.*, 
                    bp.price, 
                    bp.discount_price, 
                    bp.stock_quantity,
                    bp.is_available,
+                   bp.branch_id,
                    COALESCE(AVG(r.rating), 0) as average_rating,
-                   COUNT(r.id) as reviews_count
+                   COUNT(DISTINCT r.id) as reviews_count,
+                   c.name_ar as category_name
             FROM products p
             INNER JOIN branch_products bp ON p.id = bp.product_id
             LEFT JOIN reviews r ON r.product_id = p.id
-            WHERE p.brand_id = $1 AND bp.is_available = true
-            GROUP BY p.id, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
-            ORDER BY p.name ASC
-        `, [id]);
+            LEFT JOIN categories c ON p.category_id = c.id
+            WHERE p.brand_id = $1
+        `;
         
-        res.json({ data: rows, message: 'success' });
+        const params = [id];
+        let paramIndex = 2;
+        
+        // Filter by branch
+        if (branchId) {
+            sql += ` AND bp.branch_id = $${paramIndex}`;
+            params.push(branchId);
+            paramIndex++;
+        }
+        
+        // Filter by availability
+        if (available === 'true') {
+            sql += ` AND bp.is_available = true`;
+        }
+        
+        // Filter by category
+        if (category) {
+            sql += ` AND p.category_id = $${paramIndex}`;
+            params.push(category);
+            paramIndex++;
+        }
+        
+        sql += ` GROUP BY p.id, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id, c.name_ar`;
+        
+        // Filter by price range (after GROUP BY)
+        const havingConditions = [];
+        if (minPrice) {
+            havingConditions.push(`COALESCE(bp.discount_price, bp.price) >= ${parseFloat(minPrice)}`);
+        }
+        if (maxPrice) {
+            havingConditions.push(`COALESCE(bp.discount_price, bp.price) <= ${parseFloat(maxPrice)}`);
+        }
+        if (havingConditions.length > 0) {
+            sql += ` HAVING ${havingConditions.join(' AND ')}`;
+        }
+        
+        // Sort
+        const sortOptions = {
+            'name_asc': 'p.name_ar ASC',
+            'name_desc': 'p.name_ar DESC',
+            'price_asc': 'COALESCE(bp.discount_price, bp.price) ASC',
+            'price_desc': 'COALESCE(bp.discount_price, bp.price) DESC',
+            'rating': 'average_rating DESC',
+            'popular': 'reviews_count DESC'
+        };
+        sql += ` ORDER BY ${sortOptions[sortBy] || sortOptions['name_asc']}`;
+        
+        // Pagination
+        if (limit) {
+            sql += ` LIMIT ${parseInt(limit)}`;
+        }
+        if (offset) {
+            sql += ` OFFSET ${parseInt(offset)}`;
+        }
+        
+        const { rows } = await query(sql, params);
+        
+        // Get total count
+        let countSql = `
+            SELECT COUNT(DISTINCT p.id) as total
+            FROM products p
+            INNER JOIN branch_products bp ON p.id = bp.product_id
+            WHERE p.brand_id = $1
+        `;
+        const countParams = [id];
+        let countParamIndex = 2;
+        
+        if (branchId) {
+            countSql += ` AND bp.branch_id = $${countParamIndex}`;
+            countParams.push(branchId);
+            countParamIndex++;
+        }
+        if (available === 'true') {
+            countSql += ` AND bp.is_available = true`;
+        }
+        if (category) {
+            countSql += ` AND p.category_id = $${countParamIndex}`;
+            countParams.push(category);
+        }
+        
+        const { rows: countRows } = await query(countSql, countParams);
+        
+        res.json({ 
+            data: rows, 
+            total: parseInt(countRows[0].total),
+            message: 'success' 
+        });
     } catch (err) {
         console.error('Error fetching brand products:', err);
         res.status(500).json({ error: err.message });
