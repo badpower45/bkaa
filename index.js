@@ -22,6 +22,7 @@ import distributionRoutes from './routes/distribution.js';
 import deliveryFeesRoutes from './routes/delivery-fees.js';
 import couponsRoutes from './routes/coupons.js';
 import magazineRoutes from './routes/magazine.js';
+import magazinePagesRoutes from './routes/magazinePages.js';
 import hotDealsRoutes from './routes/hotDeals.js';
 import favoritesRoutes from './routes/favorites.js';
 import storiesRoutes from './routes/stories.js';
@@ -141,6 +142,7 @@ app.use('/api/distribution', distributionRoutes);
 app.use('/api/delivery-fees', deliveryFeesRoutes);
 app.use('/api/coupons', couponsRoutes);
 app.use('/api/magazine', magazineRoutes);
+app.use('/api/magazine', magazinePagesRoutes); // New magazine pages endpoint
 app.use('/api/hot-deals', hotDealsRoutes);
 app.use('/api/favorites', favoritesRoutes);
 app.use('/api/stories', storiesRoutes);

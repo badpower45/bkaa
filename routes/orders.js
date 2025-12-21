@@ -22,7 +22,8 @@ router.post('/', validate(orderSchema), async (req, res) => {
     
     const {
         userId, total, items, branchId, deliverySlotId, paymentMethod,
-        shippingDetails, deliveryAddress, couponId, couponCode, couponDiscount
+        shippingDetails, deliveryAddress, couponId, couponCode, couponDiscount,
+        googleMapsLink, deliveryLatitude, deliveryLongitude
     } = req.body;
     const status = 'pending';
 
@@ -109,9 +110,10 @@ router.post('/', validate(orderSchema), async (req, res) => {
         const orderCode = generateOrderCode();
         const insertSql = `
             INSERT INTO orders (
-                user_id, branch_id, total, items, status, payment_method, shipping_info, order_code
+                user_id, branch_id, total, items, status, payment_method, shipping_info, order_code,
+                google_maps_link, delivery_latitude, delivery_longitude
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id, order_code
         `;
         const { rows } = await query(insertSql, [
@@ -122,7 +124,10 @@ router.post('/', validate(orderSchema), async (req, res) => {
             status,
             paymentMethod || 'cod',
             shippingInfo ? JSON.stringify(shippingInfo) : null,
-            orderCode
+            orderCode,
+            googleMapsLink || null,
+            deliveryLatitude || null,
+            deliveryLongitude || null
         ]);
         const orderId = rows[0].id;
         const returnedOrderCode = rows[0].order_code;
