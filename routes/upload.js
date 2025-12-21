@@ -209,4 +209,61 @@ router.get('/config', (req, res) => {
     });
 });
 
+/**
+ * Upload brand logo/banner to Cloudinary
+ * POST /api/upload/brand
+ */
+router.post('/brand', upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'No image file provided' 
+            });
+        }
+
+        const { type, brandId } = req.body; // type: 'logo' or 'banner'
+        const folder = type === 'banner' ? 'brands/banners' : 'brands/logos';
+        const publicId = `${brandId}_${type}_${Date.now()}`;
+        
+        // Upload to Cloudinary
+        const uploadResult = await new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: folder,
+                    public_id: publicId,
+                    resource_type: 'image',
+                    transformation: type === 'banner' 
+                        ? [{ width: 1200, height: 400, crop: 'fill' }, { quality: 'auto:good' }]
+                        : [{ width: 400, height: 400, crop: 'fill' }, { quality: 'auto:good' }]
+                },
+                (error, result) => {
+                    if (error) reject(error);
+                    else resolve(result);
+                }
+            );
+
+            const bufferStream = Readable.from(req.file.buffer);
+            bufferStream.pipe(uploadStream);
+        });
+
+        res.json({
+            success: true,
+            message: 'Brand image uploaded successfully',
+            data: {
+                url: uploadResult.secure_url,
+                public_id: uploadResult.public_id
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Brand image upload error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to upload brand image',
+            message: error.message
+        });
+    }
+});
+
 export default router;

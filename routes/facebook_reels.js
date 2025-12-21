@@ -1,7 +1,35 @@
 import express from 'express';
 import pool from '../database.js';
+import axios from 'axios';
 
 const router = express.Router();
+
+/**
+ * Extract Facebook Reel thumbnail from URL
+ * Helper function to get thumbnail from Facebook video
+ */
+async function extractFacebookThumbnail(facebookUrl) {
+    try {
+        // Try to extract video ID from Facebook URL
+        const videoIdMatch = facebookUrl.match(/\/reel\/(\d+)/);
+        if (!videoIdMatch) {
+            // Fallback: use a placeholder or the URL itself
+            return `https://placehold.co/600x800/FF6B00/white?text=Facebook+Reel`;
+        }
+
+        const videoId = videoIdMatch[1];
+        
+        // Facebook Open Graph thumbnail URL pattern
+        // Note: This might require Facebook App credentials in production
+        const thumbnailUrl = `https://graph.facebook.com/${videoId}/picture?type=large`;
+        
+        return thumbnailUrl;
+    } catch (error) {
+        console.error('Failed to extract thumbnail:', error);
+        // Return placeholder on error
+        return `https://placehold.co/600x800/FF6B00/white?text=Facebook+Reel`;
+    }
+}
 
 // Get all active reels (for frontend)
 router.get('/', async (req, res) => {
@@ -63,11 +91,17 @@ router.post('/', async (req, res) => {
             display_order 
         } = req.body;
 
+        // Auto-extract thumbnail if not provided
+        let finalThumbnail = thumbnail_url;
+        if (!finalThumbnail && facebook_url) {
+            finalThumbnail = await extractFacebookThumbnail(facebook_url);
+        }
+
         const result = await pool.query(`
             INSERT INTO facebook_reels (title, thumbnail_url, video_url, facebook_url, views_count, duration, is_active, display_order)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING *
-        `, [title, thumbnail_url, video_url || null, facebook_url, views_count || '0', duration || '0:30', is_active !== false, display_order || 0]);
+        `, [title, finalThumbnail, video_url || null, facebook_url, views_count || '0', duration || '0:30', is_active !== false, display_order || 0]);
 
         res.json({ success: true, data: result.rows[0] });
     } catch (error) {
