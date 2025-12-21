@@ -3,9 +3,11 @@
  * Backend Routes for Admin & Analytics System
  */
 
-const express = require('express');
+import express from 'express';
+import { query } from '../database.js';
+import { verifyToken, isAdmin } from '../middleware/auth.js';
+
 const router = express.Router();
-const { adminAuth } = require('../middleware/auth'); // Middleware للتحقق من صلاحيات الأدمن
 
 // ====================================
 // 1. Customer Analytics Endpoints
@@ -15,24 +17,24 @@ const { adminAuth } = require('../middleware/auth'); // Middleware للتحقق 
  * GET /api/admin/customer-analytics
  * الحصول على تحليلات جميع العملاء
  */
-router.get('/customer-analytics', adminAuth, async (req, res) => {
+router.get('/customer-analytics', [verifyToken, isAdmin], async (req, res) => {
     try {
         const { search, rating, sortBy, limit } = req.query;
         
-        let query = 'SELECT * FROM customer_analytics WHERE 1=1';
+        let sql = 'SELECT * FROM customer_analytics WHERE 1=1';
         const params = [];
         let paramIndex = 1;
         
         // البحث
         if (search) {
-            query += ` AND (name ILIKE $${paramIndex} OR email ILIKE $${paramIndex} OR phone LIKE $${paramIndex})`;
+            sql += ` AND (name ILIKE $${paramIndex} OR email ILIKE $${paramIndex} OR phone LIKE $${paramIndex})`;
             params.push(`%${search}%`);
             paramIndex++;
         }
         
         // الفلترة حسب التقييم
         if (rating && rating !== 'all') {
-            query += ` AND customer_rating = $${paramIndex}`;
+            sql += ` AND customer_rating = $${paramIndex}`;
             params.push(rating);
             paramIndex++;
         }
@@ -44,15 +46,15 @@ router.get('/customer-analytics', adminAuth, async (req, res) => {
             'orders': 'total_orders DESC',
             'recent': 'last_order_date DESC'
         };
-        query += ` ORDER BY ${sortOptions[sortBy] || 'total_spent DESC'}`;
+        sql += ` ORDER BY ${sortOptions[sortBy] || 'total_spent DESC'}`;
         
         // الحد الأقصى
         if (limit) {
-            query += ` LIMIT $${paramIndex}`;
+            sql += ` LIMIT $${paramIndex}`;
             params.push(parseInt(limit));
         }
         
-        const result = await pool.query(query, params);
+        const result = await query(sql, params);
         
         res.json({
             success: true,
@@ -72,11 +74,11 @@ router.get('/customer-analytics', adminAuth, async (req, res) => {
  * GET /api/admin/customer-analytics/:userId
  * الحصول على تحليلات عميل محدد
  */
-router.get('/customer-analytics/:userId', adminAuth, async (req, res) => {
+router.get('/customer-analytics/:userId', [verifyToken, isAdmin], async (req, res) => {
     try {
         const { userId } = req.params;
         
-        const result = await pool.query(
+        const result = await query(
             'SELECT * FROM customer_analytics WHERE id = $1',
             [userId]
         );
@@ -105,7 +107,7 @@ router.get('/customer-analytics/:userId', adminAuth, async (req, res) => {
  * PUT /api/admin/customers/:userId/rating
  * تحديث تقييم العميل يدوياً
  */
-router.put('/customers/:userId/rating', adminAuth, async (req, res) => {
+router.put('/customers/:userId/rating', [verifyToken, isAdmin], async (req, res) => {
     try {
         const { userId } = req.params;
         const { rating } = req.body;
@@ -119,7 +121,7 @@ router.put('/customers/:userId/rating', adminAuth, async (req, res) => {
             });
         }
         
-        const result = await pool.query(
+        const result = await query(
             'UPDATE users SET customer_rating = $1 WHERE id = $2 RETURNING *',
             [rating, userId]
         );
@@ -149,9 +151,9 @@ router.put('/customers/:userId/rating', adminAuth, async (req, res) => {
  * GET /api/admin/customer-analytics/stats
  * إحصائيات عامة عن العملاء
  */
-router.get('/customer-analytics/stats', adminAuth, async (req, res) => {
+router.get('/customer-analytics/stats', [verifyToken, isAdmin], async (req, res) => {
     try {
-        const stats = await pool.query(`
+        const stats = await query(`
             SELECT 
                 COUNT(*) as total_customers,
                 COUNT(CASE WHEN customer_rating = 'excellent' THEN 1 END) as excellent_customers,
@@ -188,7 +190,7 @@ router.get('/customer-analytics/stats', adminAuth, async (req, res) => {
  * PUT /api/categories/:categoryId/banner
  * تحديث بانر التصنيف
  */
-router.put('/categories/:categoryId/banner', adminAuth, async (req, res) => {
+router.put('/categories/:categoryId/banner', [verifyToken, isAdmin], async (req, res) => {
     try {
         const { categoryId } = req.params;
         const { 
@@ -201,7 +203,7 @@ router.put('/categories/:categoryId/banner', adminAuth, async (req, res) => {
             banner_button_text
         } = req.body;
         
-        const result = await pool.query(`
+        const result = await query(`
             UPDATE categories 
             SET 
                 banner_type = $1,
@@ -263,7 +265,7 @@ router.post('/banner-clicks', async (req, res) => {
         const userAgent = req.headers['user-agent'];
         const ipAddress = req.ip;
         
-        await pool.query(`
+        await query(`
             INSERT INTO banner_clicks (
                 category_id, user_id, banner_type, action_url, 
                 session_id, user_agent, ip_address
@@ -296,9 +298,9 @@ router.post('/banner-clicks', async (req, res) => {
  * GET /api/admin/banner-analytics
  * إحصائيات البانرات
  */
-router.get('/banner-analytics', adminAuth, async (req, res) => {
+router.get('/banner-analytics', [verifyToken, isAdmin], async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM banner_analytics ORDER BY total_clicks DESC');
+        const result = await query('SELECT * FROM banner_analytics ORDER BY total_clicks DESC');
         
         res.json({
             success: true,
@@ -322,7 +324,7 @@ router.get('/banner-analytics', adminAuth, async (req, res) => {
  * POST /api/notifications/send
  * إرسال إشعار فوري
  */
-router.post('/notifications/send', adminAuth, async (req, res) => {
+router.post('/notifications/send', [verifyToken, isAdmin], async (req, res) => {
     try {
         const { 
             title, 
@@ -338,7 +340,7 @@ router.post('/notifications/send', adminAuth, async (req, res) => {
         const userId = req.user.id; // من middleware
         
         // استدعاء الـ Stored Procedure
-        const result = await pool.query(`
+        const result = await query(`
             SELECT send_push_notification($1, $2, $3, $4, $5, $6, $7, $8, $9) as notification_id
         `, [
             title,
@@ -379,7 +381,7 @@ router.post('/notifications/subscribe', async (req, res) => {
     try {
         const { user_id, device_token, platform, metadata } = req.body;
         
-        await pool.query(`
+        await query(`
             INSERT INTO push_subscriptions (user_id, device_token, platform, metadata)
             VALUES ($1, $2, $3, $4)
             ON CONFLICT (device_token) 
@@ -410,7 +412,7 @@ router.delete('/notifications/subscribe/:deviceToken', async (req, res) => {
     try {
         const { deviceToken } = req.params;
         
-        await pool.query(`
+        await query(`
             UPDATE push_subscriptions 
             SET is_active = false 
             WHERE device_token = $1
@@ -433,17 +435,17 @@ router.delete('/notifications/subscribe/:deviceToken', async (req, res) => {
  * GET /api/admin/notifications
  * الحصول على سجل الإشعارات
  */
-router.get('/notifications', adminAuth, async (req, res) => {
+router.get('/notifications', [verifyToken, isAdmin], async (req, res) => {
     try {
         const { limit = 50, offset = 0 } = req.query;
         
-        const result = await pool.query(`
+        const result = await query(`
             SELECT * FROM push_notifications 
             ORDER BY sent_at DESC 
             LIMIT $1 OFFSET $2
         `, [limit, offset]);
         
-        const countResult = await pool.query('SELECT COUNT(*) FROM push_notifications');
+        const countResult = await query('SELECT COUNT(*) FROM push_notifications');
         
         res.json({
             success: true,
@@ -458,6 +460,4 @@ router.get('/notifications', adminAuth, async (req, res) => {
         });
     }
 });
-
-
-module.exports = router;
+export default router;
