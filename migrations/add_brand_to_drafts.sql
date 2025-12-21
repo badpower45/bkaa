@@ -1,0 +1,1 @@
+ALTER TABLE draft_products ADD COLUMN IF NOT EXISTS brand_name VARCHAR(100);

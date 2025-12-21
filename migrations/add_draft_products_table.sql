@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS draft_products (
     branch_id INTEGER,
     stock_quantity INTEGER,
     expiry_date DATE,
+    brand_name VARCHAR(100),
     
     -- Status and metadata
     status VARCHAR(20) DEFAULT 'draft', -- draft, validated, rejected

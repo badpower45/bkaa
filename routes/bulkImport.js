@@ -47,7 +47,8 @@ const COLUMN_MAPPING = {
     'branch_id': ['branch_id', 'الفرع', 'فرع', 'معرف الفرع'],
     'stock_quantity': ['stock_quantity', 'الكمية', 'الكميه', 'كمية', 'كميه'],
     'image': ['image', 'image_url', 'الصورة', 'صورة', 'صوره'],
-    'expiry_date': ['expiry_date', 'تاريخ الصلاحيه', 'تاريخ الصلاحية', 'صلاحيه', 'صلاحية']
+    'expiry_date': ['expiry_date', 'تاريخ الصلاحيه', 'تاريخ الصلاحية', 'صلاحيه', 'صلاحية'],
+    'brand': ['brand', 'brand_name', 'البراند', 'الماركة', 'اسم البراند']
 };
 
 // Find column value by multiple possible names
@@ -72,7 +73,8 @@ function mapRowToProduct(row, rowIndex) {
     // Required fields (but we'll be flexible)
     const allFields = [
         'name', 'barcode', 'old_price', 'price', 'category', 
-        'subcategory', 'branch_id', 'stock_quantity', 'image', 'expiry_date'
+        'subcategory', 'branch_id', 'stock_quantity', 'image', 'expiry_date',
+        'brand'
     ];
     
     // Extract all available fields
@@ -259,11 +261,12 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                             name, category, subcategory, image, barcode,
                             old_price, price, discount_percentage,
                             branch_id, stock_quantity, expiry_date,
+                            brand_name,
                             status, import_batch_id, imported_by,
                             validation_errors, created_at, updated_at
                         ) VALUES (
                             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                            $12, $13, $14, $15, NOW(), NOW()
+                            $12, $13, $14, $15, $16, NOW(), NOW()
                         ) RETURNING id, name, category, status
                     `, [
                         product.name || 'منتج بدون اسم',
@@ -277,6 +280,7 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                         product.branch_id || 1,
                         product.stock_quantity || 0,
                         product.expiry_date || null,
+                        product.brand || null,
                         errors.length > 0 ? 'draft' : 'validated',
                         batchId,
                         userId,

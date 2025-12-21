@@ -401,8 +401,10 @@ router.put('/:id/status', [verifyToken, isAdmin], async (req, res) => {
         const order = orderRows[0];
         const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
 
-        // If confirming order: deduct from stock and reserved
-        if (status === 'confirmed' && order.status === 'pending') {
+        // If moving from pending to any active status (confirmed, preparing, ready, out_for_delivery, delivered)
+        // AND we haven't deducted stock yet (assuming pending means reserved but not deducted)
+        const activeStatuses = ['confirmed', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
+        if (activeStatuses.includes(status) && order.status === 'pending') {
             for (const item of items) {
                 await query(
                     `UPDATE branch_products 

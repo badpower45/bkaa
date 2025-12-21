@@ -133,9 +133,11 @@ router.get('/', async (req, res) => {
             let sql = `
                 SELECT DISTINCT ON (p.id) p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, 
                        p.is_organic, p.is_new, p.barcode, p.shelf_location, p.subcategory, p.description,
-                       bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id
+                       bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id,
+                       b.name_ar as brand_name, b.name_en as brand_name_en
                 FROM products p
                 LEFT JOIN branch_products bp ON p.id = bp.product_id
+                LEFT JOIN brands b ON p.brand_id = b.id
                 WHERE 1=1
             `;
             const params = [];
@@ -185,9 +187,11 @@ router.get('/', async (req, res) => {
         
         let sql = `
             SELECT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, p.is_organic, p.is_new, p.barcode, p.shelf_location,
-                   bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
+                   bp.price, bp.discount_price, bp.stock_quantity, bp.is_available,
+                   b.name_ar as brand_name, b.name_en as brand_name_en
             FROM products p
             JOIN branch_products bp ON p.id = bp.product_id
+            LEFT JOIN brands b ON p.brand_id = b.id
             WHERE bp.branch_id = $1 AND bp.is_available = TRUE
         `;
         const params = [branchId];
