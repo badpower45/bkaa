@@ -441,4 +441,163 @@ router.post('/extract-coordinates', [verifyToken, isAdmin], async (req, res) => 
     }
 });
 
+// Get products without brand (admin only)
+router.get('/admin/products-without-brand', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 100;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        // Get products without brand
+        const { rows: products } = await query(`
+            SELECT 
+                p.id,
+                p.name,
+                p.category,
+                p.subcategory,
+                p.barcode,
+                bp.price,
+                bp.stock_quantity,
+                bp.branch_id
+            FROM products p
+            LEFT JOIN branch_products bp ON p.id = bp.product_id
+            WHERE p.brand_id IS NULL
+            ORDER BY p.name
+            LIMIT $1 OFFSET $2
+        `, [limit, offset]);
+        
+        // Get total count
+        const { rows: countRows } = await query(`
+            SELECT COUNT(*) as total
+            FROM products
+            WHERE brand_id IS NULL
+        `);
+        
+        res.json({ 
+            data: products,
+            total: parseInt(countRows[0].total),
+            limit,
+            offset,
+            message: 'success' 
+        });
+    } catch (err) {
+        console.error('Error fetching products without brand:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Auto-suggest brands for products (admin only)
+router.get('/admin/auto-suggest-brands', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { rows } = await query(`
+            SELECT 
+                p.id as product_id,
+                p.name as product_name,
+                b.id as suggested_brand_id,
+                b.name_ar as suggested_brand_name,
+                'يحتوي على: ' || b.name_ar as reason
+            FROM products p
+            CROSS JOIN brands b
+            WHERE p.brand_id IS NULL
+              AND (
+                p.name ILIKE '%' || b.name_ar || '%'
+                OR p.name ILIKE '%' || b.name_en || '%'
+              )
+            ORDER BY p.name
+            LIMIT 100
+        `);
+        
+        res.json({ 
+            data: rows,
+            count: rows.length,
+            message: 'success' 
+        });
+    } catch (err) {
+        console.error('Error auto-suggesting brands:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Bulk assign brand to products (admin only)
+router.post('/admin/bulk-assign', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { product_ids, brand_id } = req.body;
+        
+        if (!Array.isArray(product_ids) || product_ids.length === 0) {
+            return res.status(400).json({ error: 'product_ids array is required' });
+        }
+        
+        if (!brand_id) {
+            return res.status(400).json({ error: 'brand_id is required' });
+        }
+        
+        // Verify brand exists
+        const { rows: brandCheck } = await query(
+            'SELECT id FROM brands WHERE id = $1',
+            [brand_id]
+        );
+        
+        if (brandCheck.length === 0) {
+            return res.status(404).json({ error: 'Brand not found' });
+        }
+        
+        // Update products
+        const placeholders = product_ids.map((_, i) => `$${i + 2}`).join(',');
+        const { rowCount } = await query(
+            `UPDATE products SET brand_id = $1 WHERE id IN (${placeholders})`,
+            [brand_id, ...product_ids]
+        );
+        
+        // Update brand products count
+        await query(`
+            UPDATE brands 
+            SET products_count = (
+                SELECT COUNT(*) FROM products WHERE brand_id = $1
+            )
+            WHERE id = $1
+        `, [brand_id]);
+        
+        res.json({ 
+            message: 'تم تحديث المنتجات بنجاح',
+            updated_count: rowCount
+        });
+    } catch (err) {
+        console.error('Error bulk assigning brand:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Auto-assign brands based on product names (admin only)
+router.post('/admin/auto-assign-all', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        // Auto-assign brands where product name contains brand name
+        const { rowCount } = await query(`
+            UPDATE products p
+            SET brand_id = b.id
+            FROM brands b
+            WHERE p.brand_id IS NULL
+              AND (
+                p.name ILIKE '%' || b.name_ar || '%'
+                OR p.name ILIKE '%' || b.name_en || '%'
+              )
+        `);
+        
+        // Update all brands products count
+        await query(`
+            UPDATE brands b
+            SET products_count = (
+                SELECT COUNT(*) FROM products p WHERE p.brand_id = b.id
+            )
+        `);
+        
+        res.json({ 
+            message: 'تم تعيين البراندات تلقائياً',
+            updated_count: rowCount
+        });
+    } catch (err) {
+        console.error('Error auto-assigning brands:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 export default router;
+
