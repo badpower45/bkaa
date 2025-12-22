@@ -33,7 +33,7 @@ const upload = multer({
 
 /**
  * Upload single image to Cloudinary
- * POST /api/upload/image
+ * POST /api/upload/image or /api/upload/single
  */
 router.post('/image', upload.single('image'), async (req, res) => {
     try {
@@ -81,6 +81,59 @@ router.post('/image', upload.single('image'), async (req, res) => {
                 height: uploadResult.height,
                 format: uploadResult.format,
                 size: uploadResult.bytes
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Image upload error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to upload image',
+            message: error.message
+        });
+    }
+});
+
+// Alias for single image upload
+router.post('/single', upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'No image file provided' 
+            });
+        }
+
+        const productId = req.body.productId || `product_${Date.now()}`;
+        
+        const uploadResult = await new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'products',
+                    public_id: productId,
+                    resource_type: 'image',
+                    transformation: [
+                        { width: 800, height: 800, crop: 'limit' },
+                        { quality: 'auto:good' },
+                        { fetch_format: 'auto' }
+                    ]
+                },
+                (error, result) => {
+                    if (error) reject(error);
+                    else resolve(result);
+                }
+            );
+
+            const bufferStream = Readable.from(req.file.buffer);
+            bufferStream.pipe(uploadStream);
+        });
+
+        res.json({
+            success: true,
+            message: 'Image uploaded successfully',
+            data: {
+                url: uploadResult.secure_url,
+                public_id: uploadResult.public_id
             }
         });
 
