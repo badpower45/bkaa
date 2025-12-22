@@ -1,0 +1,161 @@
+-- ============================================
+-- Migration: Order Cancellation + Reviews System
+-- Created: 2025-12-22
+-- ============================================
+
+-- ============================================
+-- 1. Add cancellation fields to orders table
+-- ============================================
+
+-- Add cancellation fields
+ALTER TABLE orders 
+ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
+ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP;
+
+-- ============================================
+-- 2. Add user suspension fields
+-- ============================================
+
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS suspicious_activity BOOLEAN DEFAULT false,
+ADD COLUMN IF NOT EXISTS suspension_warning_count INTEGER DEFAULT 0,
+ADD COLUMN IF NOT EXISTS last_warning_date TIMESTAMP,
+ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT false,
+ADD COLUMN IF NOT EXISTS block_reason TEXT,
+ADD COLUMN IF NOT EXISTS blocked_at TIMESTAMP,
+ADD COLUMN IF NOT EXISTS blocked_by INTEGER REFERENCES users(id);
+
+-- Create index for blocked users
+CREATE INDEX IF NOT EXISTS idx_users_blocked ON users(is_blocked) WHERE is_blocked = true;
+
+-- ============================================
+-- 3. Create product_reviews table
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS product_reviews (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    comment TEXT,
+    images JSONB DEFAULT '[]',
+    helpful_count INTEGER DEFAULT 0,
+    is_approved BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Ensure one review per user per product
+    UNIQUE(user_id, product_id)
+);
+
+-- Create indexes for reviews
+CREATE INDEX IF NOT EXISTS idx_reviews_product ON product_reviews(product_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_user ON product_reviews(user_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_rating ON product_reviews(rating);
+CREATE INDEX IF NOT EXISTS idx_reviews_approved ON product_reviews(is_approved);
+CREATE INDEX IF NOT EXISTS idx_reviews_created ON product_reviews(created_at DESC);
+
+-- ============================================
+-- 4. Create review_helpful table
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS review_helpful (
+    id SERIAL PRIMARY KEY,
+    review_id INTEGER NOT NULL REFERENCES product_reviews(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Ensure one helpful mark per user per review
+    UNIQUE(review_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_helpful_review ON review_helpful(review_id);
+
+-- ============================================
+-- 5. Add rating fields to products table
+-- ============================================
+
+ALTER TABLE products 
+ADD COLUMN IF NOT EXISTS rating NUMERIC(3,2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS reviews_count INTEGER DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_products_rating ON products(rating DESC);
+
+-- ============================================
+-- 6. Add reserved_quantity to branch_products
+-- ============================================
+
+ALTER TABLE branch_products 
+ADD COLUMN IF NOT EXISTS reserved_quantity INTEGER DEFAULT 0;
+
+-- Update existing products to set reserved to 0
+UPDATE branch_products SET reserved_quantity = 0 WHERE reserved_quantity IS NULL;
+
+-- ============================================
+-- 7. Create notifications table (if not exists)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(50) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    metadata JSONB,
+    is_read BOOLEAN DEFAULT false,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read);
+CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(type);
+
+-- ============================================
+-- 8. Update existing data
+-- ============================================
+
+-- Calculate ratings for existing products (if any mock data)
+UPDATE products p
+SET rating = COALESCE((
+    SELECT AVG(rating)::numeric(3,2)
+    FROM product_reviews
+    WHERE product_id = p.id AND is_approved = true
+), 0),
+reviews_count = COALESCE((
+    SELECT COUNT(*)
+    FROM product_reviews
+    WHERE product_id = p.id AND is_approved = true
+), 0);
+
+-- ============================================
+-- Verification Queries
+-- ============================================
+
+-- Check orders table
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name = 'orders' 
+  AND column_name IN ('cancellation_reason', 'cancelled_at')
+ORDER BY ordinal_position;
+
+-- Check users table
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name = 'users' 
+  AND column_name IN ('suspicious_activity', 'suspension_warning_count', 'is_blocked')
+ORDER BY ordinal_position;
+
+-- Check product_reviews table
+SELECT COUNT(*) as reviews_count FROM product_reviews;
+
+-- Check products rating
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name = 'products' 
+  AND column_name IN ('rating', 'reviews_count')
+ORDER BY ordinal_position;
+
+COMMENT ON TABLE product_reviews IS 'Customer reviews and ratings for products';
+COMMENT ON TABLE review_helpful IS 'Track which users found reviews helpful';
+COMMENT ON COLUMN orders.cancellation_reason IS 'Reason for order cancellation';
+COMMENT ON COLUMN users.suspension_warning_count IS 'Number of warnings for suspicious cancellation behavior';

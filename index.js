@@ -42,6 +42,10 @@ import adminAnalyticsRoutes from './routes/adminAnalytics.js';
 import adminEnhancedRoutes from './routes/adminEnhanced.js';
 import inventoryRoutes from './routes/inventory.js';
 import excelRoutes from './routes/excel.js';
+import locationRoutes from './routes/location.js';
+import orderCancellationRoutes from './routes/orderCancellation.js';
+import reviewsRoutes from './routes/reviews.js';
+import customerBlockRoutes from './routes/customerBlock.js';
 
 // dotenv is loaded in database.js with the correct path
 // No need to load it again here
@@ -168,6 +172,10 @@ app.use('/api/admin', adminAnalyticsRoutes);
 app.use('/api/admin-enhanced', adminEnhancedRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/excel', excelRoutes);
+app.use('/api/location', locationRoutes);
+app.use('/api/order-cancellation', orderCancellationRoutes);
+app.use('/api/reviews', reviewsRoutes);
+app.use('/api/customer-block', customerBlockRoutes);
 
 // Image Upload Route
 import uploadRoutes from './routes/upload.js';

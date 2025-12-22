@@ -40,12 +40,39 @@ router.post('/create', verifyToken, async (req, res) => {
             return res.status(400).json({ error: 'Only delivered orders can be returned' });
         }
         
-        // Calculate return amount
-        const totalAmount = parseFloat(order.total || 0);
-        const refundAmount = totalAmount; // Full refund for now
+        // Calculate amounts
+        const originalTotal = parseFloat(order.total || 0);
         
-        // Calculate points to deduct
-        const pointsEarned = order.loyalty_points_earned || 0;
+        // Calculate new total (after removing returned items)
+        const orderItems = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
+        const returnedItems = Array.isArray(items) ? items : [];
+        
+        let returnedItemsTotal = 0;
+        returnedItems.forEach(retItem => {
+            const orderItem = orderItems.find(oi => 
+                (oi.id || oi.productId || oi.product_id) === (retItem.id || retItem.productId || retItem.product_id)
+            );
+            if (orderItem) {
+                const price = parseFloat(orderItem.price || 0);
+                const qty = parseInt(retItem.quantity || 1);
+                returnedItemsTotal += price * qty;
+            }
+        });
+        
+        const newTotal = originalTotal - returnedItemsTotal;
+        const refundAmount = returnedItemsTotal; // المبلغ المسترجع = قيمة المنتجات المرتجعة
+        
+        // Calculate points: المبلغ المسترجع = النقاط اللي هتتخصم
+        const pointsToDeduct = Math.floor(refundAmount); // 1 جنيه = 1 نقطة
+        
+        // التحقق من استخدام النقاط: لو العميل استخدم نقاط من الطلب ده، مايقدرش يرجعه
+        const pointsUsedInOrder = order.loyalty_points_used || 0;
+        if (pointsUsedInOrder > 0) {
+            return res.status(400).json({ 
+                error: 'لا يمكن إرجاع هذا الطلب لأنك استخدمت نقاط الولاء عند الشراء',
+                details: `تم استخدام ${pointsUsedInOrder} نقطة ولاء في هذا الطلب`
+            });
+        }
         
         // Generate return code
         const returnCode = `RET${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
@@ -54,12 +81,14 @@ router.post('/create', verifyToken, async (req, res) => {
         const { rows } = await query(`
             INSERT INTO returns (
                 order_id, user_id, return_code, items, return_reason, return_notes,
-                total_amount, refund_amount, points_to_deduct, status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
+                total_amount, refund_amount, points_to_deduct, status,
+                original_total, new_total
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $11)
             RETURNING *
         `, [
             order_id, userId, returnCode, JSON.stringify(items), return_reason,
-            return_notes || null, totalAmount, refundAmount, pointsEarned
+            return_notes || null, originalTotal, refundAmount, pointsToDeduct,
+            originalTotal, newTotal
         ]);
         
         res.status(201).json({ 
@@ -284,8 +313,13 @@ router.post('/admin/approve/:id', [verifyToken, isAdmin], async (req, res) => {
             WHERE id = $4
         `, [adminId, refund_method || 'cash', notes || null, id]);
         
-        // DEDUCT LOYALTY POINTS
-        if (returnData.points_to_deduct > 0) {
+        // DEDUCT LOYALTY POINTS (المبلغ المسترجع)
+        const pointsToDeduct = returnData.points_to_deduct || 0;
+        let pointsDeducted = 0;
+        let loyaltyStatus = 'success';
+        let loyaltyMessage = '';
+        
+        if (pointsToDeduct > 0) {
             try {
                 // Get current balance
                 const userResult = await query(
@@ -294,34 +328,49 @@ router.post('/admin/approve/:id', [verifyToken, isAdmin], async (req, res) => {
                 );
                 const currentBalance = userResult.rows[0]?.loyalty_points || 0;
                 
-                // Deduct points (can go negative if user already spent them)
-                const finalBalance = currentBalance - returnData.points_to_deduct;
-                
-                await query(
-                    'UPDATE users SET loyalty_points = $1 WHERE id = $2',
-                    [finalBalance, returnData.user_id]
-                );
-                
-                console.log(`💰 Deducted ${returnData.points_to_deduct} points from user ${returnData.user_id} (${currentBalance} → ${finalBalance})`);
-                
-                // Create transaction record
-                try {
+                // التحقق من رصيد النقاط
+                if (currentBalance < pointsToDeduct) {
+                    loyaltyStatus = 'insufficient_points';
+                    loyaltyMessage = `⚠️ العميل استفاد من نقاط الولاء. الرصيد الحالي: ${currentBalance}، المطلوب خصمه: ${pointsToDeduct}`;
+                    console.log(loyaltyMessage);
+                    // مش هنخصم لو مفيش رصيد كافي - معناه العميل استخدم النقاط
+                } else {
+                    // Deduct points
+                    const finalBalance = currentBalance - pointsToDeduct;
+                    pointsDeducted = pointsToDeduct;
+                    
+                    await query(
+                        'UPDATE users SET loyalty_points = $1 WHERE id = $2',
+                        [finalBalance, returnData.user_id]
+                    );
+                    
+                    // Log the deduction مع توضيح المبلغ المسترجع
                     await query(`
-                        INSERT INTO loyalty_points_history (
-                            user_id, order_id, points, type, description
-                        ) VALUES ($1, $2, $3, 'deducted', $4)
+                        INSERT INTO loyalty_transactions (
+                            user_id, points, transaction_type, description, order_id, metadata
+                        ) VALUES ($1, $2, 'deduct', $3, $4, $5)
                     `, [
-                        returnData.user_id, 
-                        returnData.order_id, 
-                        -returnData.points_to_deduct,
-                        `خصم ${returnData.points_to_deduct} نقطة بسبب إرجاع الطلب #${returnData.order_id}`
+                        returnData.user_id,
+                        -pointsToDeduct,
+                        `خصم نقاط - مبلغ الاسترجاع: ${pointsToDeduct} جنيه من الطلب #${returnData.order_id}`,
+                        returnData.order_id,
+                        JSON.stringify({ 
+                            return_id: id,
+                            original_total: returnData.original_total || returnData.total_amount,
+                            new_total: returnData.new_total,
+                            refund_amount: returnData.refund_amount,
+                            points_deducted: pointsToDeduct
+                        })
                     ]);
-                } catch (err) {
-                    console.log('Loyalty history table not available:', err.message);
+                    
+                    loyaltyMessage = `✅ تم خصم ${pointsToDeduct} نقطة ولاء (مبلغ الاسترجاع: ${returnData.refund_amount} جنيه)`;
+                    console.log(loyaltyMessage);
                 }
-            } catch (err) {
-                console.error('Failed to deduct points:', err);
-                // Don't rollback - this is logged but not critical
+            } catch (pointsErr) {
+                console.error('Failed to deduct loyalty points:', pointsErr);
+                loyaltyStatus = 'error';
+                loyaltyMessage = `خطأ في خصم النقاط: ${pointsErr.message}`;
+                // Continue anyway - don't block return
             }
         }
         
@@ -526,6 +575,101 @@ router.post('/admin/block-customer/:userId', [verifyToken, isAdmin], async (req,
         });
     } catch (err) {
         console.error('Error blocking customer:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============ RETURN INVOICE ============
+// Get return invoice (for approved returns)
+router.get('/invoice/:returnCode', async (req, res) => {
+    try {
+        const { returnCode } = req.params;
+        
+        // Get return details with full order and user info
+        const { rows } = await query(`
+            SELECT 
+                r.*,
+                o.id as order_id,
+                o.date as order_date,
+                o.items as order_items,
+                o.branch_id,
+                u.name as customer_name,
+                u.email as customer_email,
+                u.phone as customer_phone,
+                b.name as branch_name,
+                b.location_lat,
+                b.location_lng,
+                approver.name as approved_by_name
+            FROM returns r
+            JOIN orders o ON r.order_id = o.id
+            JOIN users u ON r.user_id = u.id
+            LEFT JOIN branches b ON o.branch_id = b.id
+            LEFT JOIN users approver ON r.approved_by = approver.id
+            WHERE r.return_code = $1 AND r.status = 'approved'
+        `, [returnCode]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'فاتورة الاسترجاع غير موجودة أو غير مُعتمدة' });
+        }
+        
+        const returnData = rows[0];
+        
+        // Parse items
+        const returnedItems = typeof returnData.items === 'string' 
+            ? JSON.parse(returnData.items) 
+            : returnData.items;
+            
+        const orderItems = typeof returnData.order_items === 'string'
+            ? JSON.parse(returnData.order_items)
+            : returnData.order_items;
+        
+        // Build detailed invoice
+        const invoice = {
+            return_code: returnData.return_code,
+            status: returnData.status,
+            created_at: returnData.created_at,
+            approved_at: returnData.approved_at,
+            
+            customer: {
+                name: returnData.customer_name,
+                email: returnData.customer_email,
+                phone: returnData.customer_phone
+            },
+            
+            branch: {
+                name: returnData.branch_name || 'الفرع الرئيسي',
+                location: returnData.location_lat && returnData.location_lng 
+                    ? { lat: returnData.location_lat, lng: returnData.location_lng }
+                    : null
+            },
+            
+            financial_summary: {
+                original_total: parseFloat(returnData.original_total || returnData.total_amount || 0),
+                new_total: parseFloat(returnData.new_total || 0),
+                refund_amount: parseFloat(returnData.refund_amount || 0),
+                refund_method: returnData.refund_method || 'نقدي',
+                currency: 'EGP'
+            },
+            
+            loyalty_points: {
+                points_deducted: parseInt(returnData.points_to_deduct || 0),
+                note: 'تم خصم النقاط من رصيد العميل = مبلغ الاسترجاع'
+            },
+            
+            returned_items: returnedItems,
+            
+            return_reason: returnData.return_reason,
+            return_notes: returnData.return_notes,
+            admin_notes: returnData.admin_notes,
+            approved_by: returnData.approved_by_name
+        };
+        
+        res.json({ 
+            data: invoice,
+            message: 'فاتورة الاسترجاع'
+        });
+    } catch (err) {
+        console.error('Error fetching return invoice:', err);
         res.status(500).json({ error: err.message });
     }
 });
