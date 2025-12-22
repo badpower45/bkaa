@@ -259,6 +259,43 @@ router.get('/my', [verifyToken], async (req, res) => {
     }
 });
 
+// Get Single Order by ID (for invoice viewing)
+router.get('/:id', async (req, res) => {
+    const { id } = req.params;
+    
+    console.log('🔍 Fetching order with ID:', id);
+
+    try {
+        const { rows } = await query(
+            "SELECT * FROM orders WHERE id = $1",
+            [id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ 
+                message: 'لم يتم العثور على الطلب',
+                error: 'Order not found' 
+            });
+        }
+
+        const order = rows[0];
+        
+        res.json({
+            message: 'success',
+            data: {
+                ...order,
+                items: typeof order.items === 'string' ? JSON.parse(order.items) : order.items,
+                shipping_info: typeof order.shipping_info === 'string' ? JSON.parse(order.shipping_info) : order.shipping_info,
+                userId: order.user_id,
+                branchId: order.branch_id
+            }
+        });
+    } catch (err) {
+        console.error('Error fetching order:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Get ALL Orders (Admin - no auth for development, should be protected in production)
 router.get('/admin/all', async (req, res) => {
     const { status, branchId } = req.query;

@@ -641,7 +641,7 @@ router.post('/returns/create-full', [verifyToken, isAdmin], async (req, res) => 
         
         // Find order
         const { rows: orders } = await query(
-            'SELECT * FROM orders WHERE order_number = $1',
+            'SELECT * FROM orders WHERE order_code = $1 OR id::text = $1',
             [order_code]
         );
         
@@ -701,37 +701,43 @@ router.post('/returns/create-full', [verifyToken, isAdmin], async (req, res) => 
         // Update inventory
         if (update_inventory) {
             for (const item of items) {
-                // Use FIFO system to return items to inventory
-                const batch_number = `RET-${Date.now()}-${item.product_id}`;
-                
-                await query(`
-                    INSERT INTO inventory_batches (
-                        product_id, location_id, batch_number,
-                        quantity_received, quantity_remaining, unit_cost,
-                        notes
-                    ) VALUES ($1, 1, $2, $3, $4, $5, $6)
-                `, [
-                    item.product_id,
-                    batch_number,
-                    item.quantity,
-                    item.quantity,
-                    item.price,
-                    `Return from order ${order_code}`
-                ]);
-                
-                // Record transaction
-                await query(`
-                    INSERT INTO inventory_transactions (
-                        product_id, location_id, transaction_type,
-                        quantity, unit_cost, reference_type, reference_id, notes
-                    ) VALUES ($1, 1, 'RETURN', $2, $3, 'RETURN', $4, $5)
-                `, [
-                    item.product_id,
-                    item.quantity,
-                    item.price,
-                    newReturn[0].id,
-                    `Return from order ${order_code}`
-                ]);
+                try {
+                    // Use FIFO system to return items to inventory
+                    const batch_number = `RET-${Date.now()}-${item.product_id}`;
+                    
+                    await query(`
+                        INSERT INTO inventory_batches (
+                            product_id, location_id, batch_number,
+                            quantity_received, quantity_remaining, unit_cost,
+                            notes
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    `, [
+                        item.product_id,
+                        1, // Default location ID
+                        batch_number,
+                        item.quantity,
+                        item.quantity,
+                        item.price,
+                        `Return from order ${order_code}`
+                    ]);
+                    
+                    // Record transaction
+                    await query(`
+                        INSERT INTO inventory_transactions (
+                            product_id, location_id, transaction_type,
+                            quantity, unit_cost, reference_type, reference_id, notes
+                        ) VALUES ($1, $2, 'RETURN', $3, $4, 'RETURN', $5, $6)
+                    `, [
+                        item.product_id,
+                        1, // Default location ID
+                        item.quantity,
+                        item.price,
+                        newReturn[0].id,
+                        `Return from order ${order_code}`
+                    ]);
+                } catch (invError) {
+                    console.log('⚠️ Could not update inventory (table may not exist yet):', invError.message);
+                }
             }
         }
         
