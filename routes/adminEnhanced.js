@@ -584,6 +584,8 @@ router.get('/orders/:orderCode', [verifyToken, isAdmin], async (req, res) => {
     try {
         const { orderCode } = req.params;
         
+        console.log('🔍 Searching for order with code:', orderCode);
+        
         const { rows } = await query(`
             SELECT 
                 o.*,
@@ -595,7 +597,10 @@ router.get('/orders/:orderCode', [verifyToken, isAdmin], async (req, res) => {
             WHERE o.order_code = $1 OR o.id::text = $1
         `, [orderCode]);
         
+        console.log('📊 Query result:', { found: rows.length, orderCode });
+        
         if (rows.length === 0) {
+            console.log('❌ Order not found:', orderCode);
             return res.status(404).json({ 
                 success: false, 
                 message: 'لم يتم العثور على الطلب' 
@@ -603,6 +608,8 @@ router.get('/orders/:orderCode', [verifyToken, isAdmin], async (req, res) => {
         }
         
         const order = rows[0];
+        console.log('✅ Order found:', { id: order.id, order_code: order.order_code });
+        
         // Parse items if string
         if (order.items && typeof order.items === 'string') {
             order.items = JSON.parse(order.items);
@@ -613,7 +620,7 @@ router.get('/orders/:orderCode', [verifyToken, isAdmin], async (req, res) => {
             data: order
         });
     } catch (error) {
-        console.error('Error fetching order:', error);
+        console.error('❌ Error fetching order:', error);
         res.status(500).json({ 
             success: false, 
             message: 'فشل جلب بيانات الطلب',
