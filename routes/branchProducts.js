@@ -11,9 +11,12 @@ router.get('/:branchId', async (req, res) => {
 
     try {
         let sql = `
-            SELECT p.*, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
+            SELECT p.*, 
+                   bp.price, bp.discount_price, bp.stock_quantity, bp.is_available,
+                   b.name_ar as brand_name, b.name_en as brand_name_en
             FROM products p
             JOIN branch_products bp ON p.id = bp.product_id
+            LEFT JOIN brands b ON p.brand_id = b.id
             WHERE bp.branch_id = $1
         `;
         const params = [branchId];

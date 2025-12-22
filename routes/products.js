@@ -245,14 +245,23 @@ router.get('/:id', async (req, res) => {
 
         if (branchId) {
             sql = `
-                SELECT p.*, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
+                SELECT p.*, 
+                       bp.price, bp.discount_price, bp.stock_quantity, bp.is_available,
+                       b.name_ar as brand_name, b.name_en as brand_name_en
                 FROM products p
                 LEFT JOIN branch_products bp ON p.id = bp.product_id AND bp.branch_id = $2
+                LEFT JOIN brands b ON p.brand_id = b.id
                 WHERE p.id = $1
             `;
             params = [id, branchId];
         } else {
-            sql = "SELECT * FROM products WHERE id = $1";
+            sql = `
+                SELECT p.*, 
+                       b.name_ar as brand_name, b.name_en as brand_name_en
+                FROM products p
+                LEFT JOIN brands b ON p.brand_id = b.id
+                WHERE p.id = $1
+            `;
             params = [id];
         }
 
@@ -284,9 +293,12 @@ router.get('/barcode/:barcode', async (req, res) => {
                    bp.discount_price, 
                    bp.stock_quantity, 
                    bp.is_available,
-                   bp.branch_id
+                   bp.branch_id,
+                   b.name_ar as brand_name, 
+                   b.name_en as brand_name_en
             FROM products p
             LEFT JOIN branch_products bp ON p.id = bp.product_id AND bp.branch_id = $2
+            LEFT JOIN brands b ON p.brand_id = b.id
             WHERE p.barcode = $1
         `;
         
