@@ -71,6 +71,41 @@ router.get('/customer-analytics', [verifyToken, isAdmin], async (req, res) => {
 });
 
 /**
+ * GET /api/admin/customer-analytics/stats
+ * إحصائيات عامة عن العملاء
+ * IMPORTANT: This must come BEFORE the /:userId route
+ */
+router.get('/customer-analytics/stats', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const stats = await query(`
+            SELECT 
+                COUNT(*) as total_customers,
+                COUNT(CASE WHEN customer_rating = 'excellent' THEN 1 END) as excellent_customers,
+                COUNT(CASE WHEN customer_rating = 'good' THEN 1 END) as good_customers,
+                COUNT(CASE WHEN customer_rating = 'problematic' THEN 1 END) as problematic_customers,
+                COUNT(CASE WHEN customer_rating = 'banned' THEN 1 END) as banned_customers,
+                SUM(total_orders) as total_orders_all,
+                SUM(rejected_orders) as total_rejected_orders,
+                SUM(completed_orders) as total_completed_orders,
+                SUM(total_spent) as total_revenue,
+                AVG(average_order_value) as avg_order_value
+            FROM customer_analytics
+        `);
+        
+        res.json({
+            success: true,
+            data: stats.rows[0]
+        });
+    } catch (error) {
+        console.error('Error fetching stats:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to fetch stats' 
+        });
+    }
+});
+
+/**
  * GET /api/admin/customer-analytics/:userId
  * الحصول على تحليلات عميل محدد
  */

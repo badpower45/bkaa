@@ -9,18 +9,22 @@ const router = express.Router();
  */
 router.get('/pages', async (req, res) => {
     try {
+        console.log('📚 Fetching magazine pages...');
+        
         const result = await query(
             `SELECT 
                 id, page_number, image_url, title, description,
-                display_order, cta_text, cta_url, category_id, product_id
+                display_order, cta_text, cta_url, category_id, product_id, is_active
              FROM magazine_pages
              WHERE is_active = true
              ORDER BY display_order ASC, page_number ASC`
         );
         
+        console.log('📚 Found', result.rows.length, 'active magazine pages');
+        
         res.json(result.rows);
     } catch (error) {
-        console.error('Error fetching magazine pages:', error);
+        console.error('❌ Error fetching magazine pages:', error);
         res.status(500).json({ error: 'Failed to fetch magazine pages' });
     }
 });
