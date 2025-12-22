@@ -577,6 +577,195 @@ router.post('/returns/create-from-order', [verifyToken, isAdmin], async (req, re
 });
 
 /**
+ * GET /api/admin-enhanced/orders/:orderCode
+ * Get order details by order code
+ */
+router.get('/orders/:orderCode', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { orderCode } = req.params;
+        
+        const { rows } = await query(`
+            SELECT 
+                o.*,
+                u.name as customer_name,
+                u.email as customer_email,
+                u.phone as customer_phone
+            FROM orders o
+            LEFT JOIN users u ON o.user_id = u.id
+            WHERE o.order_number = $1
+        `, [orderCode]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'لم يتم العثور على الطلب' 
+            });
+        }
+        
+        res.json({
+            success: true,
+            data: rows[0]
+        });
+    } catch (error) {
+        console.error('Error fetching order:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'فشل جلب بيانات الطلب',
+            error: error.message 
+        });
+    }
+});
+
+/**
+ * POST /api/admin-enhanced/returns/create-full
+ * Create return with inventory and loyalty updates
+ */
+router.post('/returns/create-full', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { 
+            order_code, 
+            return_reason, 
+            return_notes, 
+            items, 
+            refund_amount,
+            update_inventory = true,
+            update_loyalty = true
+        } = req.body;
+        
+        if (!order_code || !return_reason || !items || items.length === 0) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'بيانات غير مكتملة' 
+            });
+        }
+        
+        // Find order
+        const { rows: orders } = await query(
+            'SELECT * FROM orders WHERE order_number = $1',
+            [order_code]
+        );
+        
+        if (orders.length === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'لم يتم العثور على الطلب' 
+            });
+        }
+        
+        const order = orders[0];
+        
+        // Check for existing return
+        const { rows: existingReturns } = await query(
+            'SELECT * FROM returns WHERE order_id = $1',
+            [order.id]
+        );
+        
+        if (existingReturns.length > 0) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'يوجد بالفعل طلب مرتجع لهذا الطلب' 
+            });
+        }
+        
+        // Generate return code
+        const returnCode = `RET-${Date.now()}-${order.id}`;
+        
+        // Create return
+        const { rows: newReturn } = await query(`
+            INSERT INTO returns (
+                return_code,
+                order_id,
+                user_id,
+                return_reason,
+                return_notes,
+                items,
+                total_amount,
+                refund_amount,
+                status,
+                created_at,
+                updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+            RETURNING *
+        `, [
+            returnCode,
+            order.id,
+            order.user_id,
+            return_reason,
+            return_notes || '',
+            JSON.stringify(items),
+            order.total,
+            refund_amount,
+            'approved' // Auto-approve for admin-created returns
+        ]);
+        
+        // Update inventory
+        if (update_inventory) {
+            for (const item of items) {
+                // Use FIFO system to return items to inventory
+                const batch_number = `RET-${Date.now()}-${item.product_id}`;
+                
+                await query(`
+                    INSERT INTO inventory_batches (
+                        product_id, location_id, batch_number,
+                        quantity_received, quantity_remaining, unit_cost,
+                        notes
+                    ) VALUES ($1, 1, $2, $3, $4, $5, $6)
+                `, [
+                    item.product_id,
+                    batch_number,
+                    item.quantity,
+                    item.quantity,
+                    item.price,
+                    `Return from order ${order_code}`
+                ]);
+                
+                // Record transaction
+                await query(`
+                    INSERT INTO inventory_transactions (
+                        product_id, location_id, transaction_type,
+                        quantity, unit_cost, reference_type, reference_id, notes
+                    ) VALUES ($1, 1, 'RETURN', $2, $3, 'RETURN', $4, $5)
+                `, [
+                    item.product_id,
+                    item.quantity,
+                    item.price,
+                    newReturn[0].id,
+                    `Return from order ${order_code}`
+                ]);
+            }
+        }
+        
+        // Update loyalty points
+        if (update_loyalty && order.loyalty_points_earned) {
+            const pointsToDeduct = Math.floor((refund_amount / order.total) * order.loyalty_points_earned);
+            
+            await query(`
+                UPDATE users 
+                SET loyalty_points = GREATEST(0, loyalty_points - $1)
+                WHERE id = $2
+            `, [pointsToDeduct, order.user_id]);
+        }
+        
+        res.json({
+            success: true,
+            message: 'تم إنشاء المرتجع وتحديث المخزون ونقاط الولاء بنجاح',
+            data: {
+                return: newReturn[0],
+                inventory_updated: update_inventory,
+                loyalty_updated: update_loyalty
+            }
+        });
+    } catch (error) {
+        console.error('Error creating full return:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'فشل إنشاء المرتجع',
+            error: error.message 
+        });
+    }
+});
+
+/**
  * GET /api/admin-enhanced/returns/:id
  * Get single return details
  */
