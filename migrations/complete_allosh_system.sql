@@ -186,6 +186,7 @@ CREATE INDEX IF NOT EXISTS idx_returns_order ON returns(order_id);
 CREATE INDEX IF NOT EXISTS idx_returns_user ON returns(user_id);
 CREATE INDEX IF NOT EXISTS idx_returns_code ON returns(return_code);
 CREATE INDEX IF NOT EXISTS idx_returns_status ON returns(status);
+CREATE INDEX IF NOT EXISTS idx_returns_created ON returns(created_at DESC);
 
 
 -- 5. نظام البلوكات (Blocked Users System)
@@ -324,7 +325,8 @@ INSERT INTO brands (id, name_ar, name_en, slogan_ar, slogan_en, rating, logo_url
 ('juhayna', 'جهينة', 'Juhayna', 'طبيعي 100%', '100% Natural', 4.3, 'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=200', '#00A651', '#00843D', true, 3),
 ('nestle', 'نستله', 'Nestlé', 'جيد للغذاء، جيد للحياة', 'Good Food, Good Life', 4.6, 'https://images.unsplash.com/photo-1563262924-641a8b3d397f?w=200', '#C41E3A', '#8B0000', true, 4),
 ('galaxy', 'جالاكسي', 'Galaxy', 'شوكولاتة بنكهة الحرير', 'Silk Chocolate', 4.4, 'https://images.unsplash.com/photo-1606312619070-d48b4c652a52?w=200', '#8B4513', '#5D3A1A', true, 5),
-('lays', 'ليز', 'Lay''s', 'لا تستطيع أن تأكل واحدة فقط', 'Betcha Can''t Eat Just One', 4.2, 'https://images.unsplash.com/photo-1566478989037-eec170784d0b?w=200', '#FFD700', '#FFA500', false, 6);
+('lays', 'ليز', 'Lay''s', 'لا تستطيع أن تأكل واحدة فقط', 'Betcha Can''t Eat Just One', 4.2, 'https://images.unsplash.com/photo-1566478989037-eec170784d0b?w=200', '#FFD700', '#FFA500', false, 6)
+ON CONFLICT (id) DO NOTHING;
 
 -- ============================================
 -- إدخال بيانات تجريبية للمكافآت
@@ -334,7 +336,8 @@ INSERT INTO loyalty_rewards (name, name_ar, description_ar, points_required, dis
 ('خصم 35 جنيه', 'خصم 35 جنيه', 'احصل على خصم 35 جنيه على طلبك القادم', 1000, 35.00, 100, true),
 ('خصم 75 جنيه', 'خصم 75 جنيه', 'احصل على خصم 75 جنيه على طلبك القادم', 2000, 75.00, 50, true),
 ('خصم 150 جنيه', 'خصم 150 جنيه', 'احصل على خصم 150 جنيه على طلبك القادم', 4000, 150.00, 25, true),
-('توصيل مجاني', 'توصيل مجاني', 'احصل على توصيل مجاني على طلبك القادم', 500, 15.00, 200, true);
+('توصيل مجاني', 'توصيل مجاني', 'احصل على توصيل مجاني على طلبك القادم', 500, 15.00, 200, true)
+ON CONFLICT DO NOTHING;
 
 -- ============================================
 -- تم الانتهاء من جميع التعديلات! ✅
