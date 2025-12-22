@@ -630,6 +630,44 @@ router.get('/orders/:orderCode', [verifyToken, isAdmin], async (req, res) => {
 });
 
 /**
+ * GET /api/admin-enhanced/orders-delivered
+ * Get all delivered orders without returns
+ */
+router.get('/orders-delivered', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { rows } = await query(`
+            SELECT 
+                o.id,
+                o.order_code,
+                o.created_at,
+                o.total,
+                o.status,
+                u.name as customer_name,
+                u.email as customer_email,
+                u.phone as customer_phone
+            FROM orders o
+            LEFT JOIN users u ON o.user_id = u.id
+            LEFT JOIN returns r ON r.order_id = o.id
+            WHERE o.status = 'delivered' AND r.id IS NULL
+            ORDER BY o.created_at DESC
+            LIMIT 100
+        `);
+        
+        res.json({
+            success: true,
+            data: rows
+        });
+    } catch (error) {
+        console.error('❌ Error fetching delivered orders:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'فشل جلب الطلبات المُسَلَّمة',
+            error: error.message 
+        });
+    }
+});
+
+/**
  * POST /api/admin-enhanced/returns/create-full
  * Create return with inventory and loyalty updates
  */
@@ -666,6 +704,14 @@ router.post('/returns/create-full', [verifyToken, isAdmin], async (req, res) => 
         }
         
         const order = orders[0];
+        
+        // ✅ Check if order is delivered
+        if (order.status !== 'delivered') {
+            return res.status(400).json({ 
+                success: false, 
+                message: `لا يمكن إرجاع هذا الطلب - يجب أن يكون مُسَلَّم أولاً (الحالة الحالية: ${order.status})` 
+            });
+        }
         
         // Check for existing return
         const { rows: existingReturns } = await query(
