@@ -1,7 +1,6 @@
 -- ============================================
--- Migration: Admin Enhanced System
--- نظام الإدارة المحسّن (إشعارات، بانرات، تحليلات)
--- Created: 2025-12-22
+-- Migration: Admin Enhanced System (Clean Version)
+-- Run this AFTER: 01_fix_returns_table.sql
 -- ============================================
 
 -- ============================================
@@ -80,44 +79,6 @@ BEGIN
     END IF;
 END $$;
 
--- Update returns table (add missing columns)
-DO $$ 
-BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'returns') THEN
-        -- Add missing columns
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'returns' AND column_name = 'pickup_address') THEN
-            ALTER TABLE returns ADD COLUMN pickup_address TEXT;
-        END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'returns' AND column_name = 'preferred_date') THEN
-            ALTER TABLE returns ADD COLUMN preferred_date TIMESTAMP;
-        END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'returns' AND column_name = 'admin_notes') THEN
-            ALTER TABLE returns ADD COLUMN admin_notes TEXT;
-        END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'returns' AND column_name = 'created_at') THEN
-            ALTER TABLE returns ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-        END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'returns' AND column_name = 'updated_at') THEN
-            ALTER TABLE returns ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-        END IF;
-        
-        -- Create indexes for returns table
-        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_returns_user ON returns(user_id)';
-        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_returns_order ON returns(order_id)';
-        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_returns_status ON returns(status)';
-        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_returns_code ON returns(return_code)';
-        
-        -- Only create created_at index if column exists (double check)
-        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'returns' AND column_name = 'created_at') THEN
-            EXECUTE 'CREATE INDEX IF NOT EXISTS idx_returns_created ON returns(created_at DESC)';
-        END IF;
-    END IF;
-END $$;
-
 -- ============================================
 -- STEP 3: Create Indexes
 -- ============================================
@@ -138,11 +99,15 @@ CREATE INDEX IF NOT EXISTS idx_cta_clicks_user ON cta_clicks(user_id);
 DO $$ 
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'fcm_token') THEN
-        CREATE INDEX IF NOT EXISTS idx_users_fcm_token ON users(fcm_token);
+        IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = 'users' AND indexname = 'idx_users_fcm_token') THEN
+            CREATE INDEX idx_users_fcm_token ON users(fcm_token);
+        END IF;
     END IF;
     
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'last_login') THEN
-        CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login DESC);
+        IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = 'users' AND indexname = 'idx_users_last_login') THEN
+            CREATE INDEX idx_users_last_login ON users(last_login DESC);
+        END IF;
     END IF;
 END $$;
 
@@ -190,5 +155,5 @@ BEGIN
 END $$;
 
 -- ============================================
--- Migration Completed Successfully! ✅
+-- Admin Enhanced System Installed! ✅
 -- ============================================

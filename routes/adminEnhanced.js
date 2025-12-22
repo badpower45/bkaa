@@ -422,4 +422,200 @@ router.get('/dashboard/overview', [verifyToken, isAdmin], async (req, res) => {
     }
 });
 
+// ====================================
+// 4. Returns Management for Admin
+// ====================================
+
+/**
+ * GET /api/admin-enhanced/returns
+ * Get all returns with filters
+ */
+router.get('/returns', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { status, page = 1, limit = 20 } = req.query;
+        const offset = (page - 1) * limit;
+        
+        let whereClause = '';
+        const params = [parseInt(limit), parseInt(offset)];
+        
+        if (status) {
+            whereClause = 'WHERE r.status = $3';
+            params.push(status);
+        }
+        
+        const { rows } = await query(`
+            SELECT 
+                r.*,
+                o.order_number,
+                o.total as order_total,
+                u.name as customer_name,
+                u.email as customer_email,
+                u.phone as customer_phone
+            FROM returns r
+            LEFT JOIN orders o ON r.order_id = o.id
+            LEFT JOIN users u ON r.user_id = u.id
+            ${whereClause}
+            ORDER BY r.created_at DESC
+            LIMIT $1 OFFSET $2
+        `, params);
+        
+        // Get total count
+        const countQuery = status 
+            ? 'SELECT COUNT(*) FROM returns WHERE status = $1' 
+            : 'SELECT COUNT(*) FROM returns';
+        const { rows: countRows } = await query(
+            countQuery, 
+            status ? [status] : []
+        );
+        
+        res.json({
+            success: true,
+            data: rows,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total: parseInt(countRows[0].count),
+                pages: Math.ceil(countRows[0].count / limit)
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching returns:', error);
+        res.status(500).json({ error: 'Failed to fetch returns' });
+    }
+});
+
+/**
+ * GET /api/admin-enhanced/returns/:id
+ * Get single return details
+ */
+router.get('/returns/:id', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const { rows } = await query(`
+            SELECT 
+                r.*,
+                o.order_number,
+                o.total as order_total,
+                o.items as order_items,
+                u.name as customer_name,
+                u.email as customer_email,
+                u.phone as customer_phone,
+                approver.name as approver_name
+            FROM returns r
+            LEFT JOIN orders o ON r.order_id = o.id
+            LEFT JOIN users u ON r.user_id = u.id
+            LEFT JOIN users approver ON r.approved_by = approver.id
+            WHERE r.id = $1
+        `, [id]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Return not found' });
+        }
+        
+        res.json({
+            success: true,
+            data: rows[0]
+        });
+    } catch (error) {
+        console.error('Error fetching return details:', error);
+        res.status(500).json({ error: 'Failed to fetch return details' });
+    }
+});
+
+/**
+ * PUT /api/admin-enhanced/returns/:id/approve
+ * Approve a return request
+ */
+router.put('/returns/:id/approve', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { refund_amount, admin_notes } = req.body;
+        
+        await query('BEGIN');
+        
+        // Get return details
+        const { rows: returnRows } = await query(
+            'SELECT * FROM returns WHERE id = $1 FOR UPDATE',
+            [id]
+        );
+        
+        if (returnRows.length === 0) {
+            await query('ROLLBACK');
+            return res.status(404).json({ error: 'Return not found' });
+        }
+        
+        const returnData = returnRows[0];
+        
+        // Update return status
+        const { rows: updatedReturn } = await query(`
+            UPDATE returns 
+            SET status = 'approved',
+                refund_amount = $1,
+                admin_notes = $2,
+                approved_by = $3,
+                approved_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $4
+            RETURNING *
+        `, [
+            refund_amount || returnData.refund_amount,
+            admin_notes,
+            req.user.id,
+            id
+        ]);
+        
+        await query('COMMIT');
+        
+        res.json({
+            success: true,
+            message: 'Return approved successfully',
+            data: updatedReturn[0]
+        });
+    } catch (error) {
+        await query('ROLLBACK');
+        console.error('Error approving return:', error);
+        res.status(500).json({ error: 'Failed to approve return' });
+    }
+});
+
+/**
+ * PUT /api/admin-enhanced/returns/:id/reject
+ * Reject a return request
+ */
+router.put('/returns/:id/reject', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { rejection_reason } = req.body;
+        
+        if (!rejection_reason) {
+            return res.status(400).json({ error: 'Rejection reason is required' });
+        }
+        
+        const { rows } = await query(`
+            UPDATE returns 
+            SET status = 'rejected',
+                rejection_reason = $1,
+                approved_by = $2,
+                approved_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $3
+            RETURNING *
+        `, [rejection_reason, req.user.id, id]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Return not found' });
+        }
+        
+        res.json({
+            success: true,
+            message: 'Return rejected successfully',
+            data: rows[0]
+        });
+    } catch (error) {
+        console.error('Error rejecting return:', error);
+        res.status(500).json({ error: 'Failed to reject return' });
+    }
+});
+
 export default router;
