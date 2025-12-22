@@ -6,13 +6,23 @@ import { validate, orderSchema } from '../middleware/validation.js';
 const router = express.Router();
 
 // Helper function to generate order code
+// Format: ORD-YYMMDD-XXXXX (avoid confusing chars like O/0, I/1)
 function generateOrderCode() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let code = 'ORD-';
-    for (let i = 0; i < 6; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    // Date part (YYMMDD)
+    const now = new Date();
+    const year = now.getFullYear().toString().slice(-2);
+    const month = (now.getMonth() + 1).toString().padStart(2, '0');
+    const day = now.getDate().toString().padStart(2, '0');
+    const datePart = `${year}${month}${day}`;
+    
+    // Random part (5 characters, excluding confusing chars)
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No I, O, 0, 1
+    let randomPart = '';
+    for (let i = 0; i < 5; i++) {
+        randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    return code;
+    
+    return `ORD-${datePart}-${randomPart}`;
 }
 
 // Create Order - with validation
