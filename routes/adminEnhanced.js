@@ -575,11 +575,6 @@ router.post('/returns/create-from-order', [verifyToken, isAdmin], async (req, re
         });
     }
 });
-    } catch (error) {
-        console.error('Error fetching returns:', error);
-        res.status(500).json({ error: 'Failed to fetch returns' });
-    }
-});
 
 /**
  * GET /api/admin-enhanced/returns/:id
