@@ -80,12 +80,11 @@ router.get('/:id/categories', async (req, res) => {
         const { branchId } = req.query;
         
         let sql = `
-            SELECT DISTINCT c.id, c.name_ar, c.name_en, c.icon, c.image_url,
+            SELECT DISTINCT p.category,
                    COUNT(DISTINCT p.id) as products_count
-            FROM categories c
-            INNER JOIN products p ON p.category_id = c.id
+            FROM products p
             INNER JOIN branch_products bp ON p.id = bp.product_id
-            WHERE p.brand_id = $1 AND bp.is_available = true
+            WHERE p.brand_id = $1 AND bp.is_available = true AND p.category IS NOT NULL
         `;
         
         const params = [id];
@@ -97,10 +96,19 @@ router.get('/:id/categories', async (req, res) => {
             paramIndex++;
         }
         
-        sql += ` GROUP BY c.id ORDER BY c.name_ar ASC`;
+        sql += ` GROUP BY p.category ORDER BY p.category ASC`;
         
         const { rows } = await query(sql, params);
-        res.json({ data: rows, message: 'success' });
+        
+        // Transform to match expected format
+        const categories = rows.map(row => ({
+            id: row.category,
+            name_ar: row.category,
+            name_en: row.category,
+            products_count: parseInt(row.products_count)
+        }));
+        
+        res.json({ data: categories, message: 'success' });
     } catch (err) {
         console.error('Error fetching brand categories:', err);
         res.status(500).json({ error: err.message });
@@ -166,11 +174,10 @@ router.get('/:id/products', async (req, res) => {
                    bp.branch_id,
                    COALESCE(AVG(r.rating), 0) as average_rating,
                    COUNT(DISTINCT r.id) as reviews_count,
-                   c.name_ar as category_name
+                   p.category as category_name
             FROM products p
             INNER JOIN branch_products bp ON p.id = bp.product_id
             LEFT JOIN reviews r ON r.product_id = p.id
-            LEFT JOIN categories c ON p.category_id = c.id
             WHERE p.brand_id = $1
         `;
         
@@ -191,12 +198,12 @@ router.get('/:id/products', async (req, res) => {
         
         // Filter by category
         if (category) {
-            sql += ` AND p.category_id = $${paramIndex}`;
+            sql += ` AND p.category = $${paramIndex}`;
             params.push(category);
             paramIndex++;
         }
         
-        sql += ` GROUP BY p.id, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id, c.name_ar`;
+        sql += ` GROUP BY p.id, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id, p.category`;
         
         // Filter by price range (after GROUP BY)
         const havingConditions = [];
@@ -212,8 +219,8 @@ router.get('/:id/products', async (req, res) => {
         
         // Sort
         const sortOptions = {
-            'name_asc': 'p.name_ar ASC',
-            'name_desc': 'p.name_ar DESC',
+            'name_asc': 'p.name ASC',
+            'name_desc': 'p.name DESC',
             'price_asc': 'COALESCE(bp.discount_price, bp.price) ASC',
             'price_desc': 'COALESCE(bp.discount_price, bp.price) DESC',
             'rating': 'average_rating DESC',
