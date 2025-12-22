@@ -1,14 +1,24 @@
 -- ============================================
--- Migration: Admin Enhanced System (Clean Version)
--- Run this AFTER: 01_fix_returns_table.sql
+-- FRESH START - Drop and Recreate Everything
 -- ============================================
 
--- ============================================
--- STEP 1: Create New Tables
--- ============================================
+-- STEP 1: Drop All Old Indexes
+DROP INDEX IF EXISTS idx_push_notifications_created;
+DROP INDEX IF EXISTS idx_cta_banners_position;
+DROP INDEX IF EXISTS idx_cta_banners_active;
+DROP INDEX IF EXISTS idx_cta_banners_dates;
+DROP INDEX IF EXISTS idx_cta_clicks_cta;
+DROP INDEX IF EXISTS idx_cta_clicks_user;
+DROP INDEX IF EXISTS idx_users_fcm_token;
+DROP INDEX IF EXISTS idx_users_last_login;
 
--- 1. Push Notifications Table
-CREATE TABLE IF NOT EXISTS push_notifications (
+-- STEP 2: Drop Old Tables (if they exist in bad state)
+DROP TABLE IF EXISTS cta_clicks;
+DROP TABLE IF EXISTS cta_banners;
+DROP TABLE IF EXISTS push_notifications;
+
+-- STEP 3: Create Fresh Tables
+CREATE TABLE push_notifications (
     id SERIAL PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
     body TEXT NOT NULL,
@@ -20,12 +30,11 @@ CREATE TABLE IF NOT EXISTS push_notifications (
     sent_count INTEGER DEFAULT 0,
     delivered_count INTEGER DEFAULT 0,
     clicked_count INTEGER DEFAULT 0,
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_by INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. CTA Banners Table
-CREATE TABLE IF NOT EXISTS cta_banners (
+CREATE TABLE cta_banners (
     id SERIAL PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
     subtitle VARCHAR(500),
@@ -42,118 +51,42 @@ CREATE TABLE IF NOT EXISTS cta_banners (
     start_date TIMESTAMP,
     end_date TIMESTAMP,
     is_active BOOLEAN DEFAULT true,
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_by INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. CTA Clicks Tracking
-CREATE TABLE IF NOT EXISTS cta_clicks (
+CREATE TABLE cta_clicks (
     id SERIAL PRIMARY KEY,
-    cta_id INTEGER REFERENCES cta_banners(id) ON DELETE CASCADE,
-    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    cta_id INTEGER,
+    user_id INTEGER,
     clicked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ============================================
--- STEP 2: Update Existing Tables
--- ============================================
+-- STEP 4: Update Users and Orders
+ALTER TABLE users ADD COLUMN IF NOT EXISTS fcm_token VARCHAR(500);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_id INTEGER;
 
--- Add columns to users table
-DO $$ 
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'fcm_token') THEN
-        ALTER TABLE users ADD COLUMN fcm_token VARCHAR(500);
-    END IF;
-    
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'last_login') THEN
-        ALTER TABLE users ADD COLUMN last_login TIMESTAMP;
-    END IF;
-END $$;
+-- STEP 5: Create All Indexes
+CREATE INDEX idx_push_notifications_created ON push_notifications(created_at DESC);
+CREATE INDEX idx_cta_banners_position ON cta_banners(position);
+CREATE INDEX idx_cta_banners_active ON cta_banners(is_active);
+CREATE INDEX idx_cta_banners_dates ON cta_banners(start_date, end_date);
+CREATE INDEX idx_cta_clicks_cta ON cta_clicks(cta_id);
+CREATE INDEX idx_cta_clicks_user ON cta_clicks(user_id);
+CREATE INDEX idx_users_fcm_token ON users(fcm_token);
+CREATE INDEX idx_users_last_login ON users(last_login DESC);
 
--- Add columns to orders table
-DO $$ 
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'orders' AND column_name = 'return_id') THEN
-        ALTER TABLE orders ADD COLUMN return_id INTEGER;
-    END IF;
-END $$;
-
--- ============================================
--- STEP 3: Create Indexes
--- ============================================
-
--- Push notifications indexes
-CREATE INDEX IF NOT EXISTS idx_push_notifications_created ON push_notifications(created_at DESC);
-
--- CTA banners indexes
-CREATE INDEX IF NOT EXISTS idx_cta_banners_position ON cta_banners(position);
-CREATE INDEX IF NOT EXISTS idx_cta_banners_active ON cta_banners(is_active);
-CREATE INDEX IF NOT EXISTS idx_cta_banners_dates ON cta_banners(start_date, end_date);
-
--- CTA clicks indexes
-CREATE INDEX IF NOT EXISTS idx_cta_clicks_cta ON cta_clicks(cta_id);
-CREATE INDEX IF NOT EXISTS idx_cta_clicks_user ON cta_clicks(user_id);
-
--- Users indexes (if columns exist)
-DO $$ 
-BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'fcm_token') THEN
-        IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = 'users' AND indexname = 'idx_users_fcm_token') THEN
-            CREATE INDEX idx_users_fcm_token ON users(fcm_token);
-        END IF;
-    END IF;
-    
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'last_login') THEN
-        IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = 'users' AND indexname = 'idx_users_last_login') THEN
-            CREATE INDEX idx_users_last_login ON users(last_login DESC);
-        END IF;
-    END IF;
-END $$;
-
--- ============================================
 -- STEP 4: Insert Sample Data
--- ============================================
-
-DO $$
-BEGIN
-    INSERT INTO cta_banners (
-        title, subtitle, button_text, action_type, action_value, 
-        position, priority, created_by
-    ) VALUES
-    (
-        'عروض حصرية اليوم! 🎉',
-        'خصومات تصل إلى 50% على منتجات مختارة',
-        'تسوق الآن',
-        'page',
-        '/hot-deals',
-        'home_top',
-        10,
-        (SELECT CASE WHEN EXISTS (SELECT 1 FROM users WHERE id = 1) THEN 1 ELSE NULL END)
-    ),
-    (
-        'انضم لبرنامج الولاء',
-        'اربح نقاط مع كل عملية شراء وحولها لأموال',
-        'اعرف المزيد',
-        'page',
-        '/loyalty',
-        'home_middle',
-        5,
-        (SELECT CASE WHEN EXISTS (SELECT 1 FROM users WHERE id = 1) THEN 1 ELSE NULL END)
-    ),
-    (
-        'شحن مجاني! 🚚',
-        'على الطلبات فوق 600 جنيه',
-        'ابدأ التسوق',
-        'page',
-        '/products',
-        'cart',
-        8,
-        (SELECT CASE WHEN EXISTS (SELECT 1 FROM users WHERE id = 1) THEN 1 ELSE NULL END)
-    )
-    ON CONFLICT DO NOTHING;
-END $$;
+INSERT INTO cta_banners (
+    title, subtitle, button_text, action_type, action_value, position, priority
+) VALUES
+('عروض حصرية اليوم! 🎉', 'خصومات تصل إلى 50% على منتجات مختارة', 'تسوق الآن', 'page', '/hot-deals', 'home_top', 10),
+('انضم لبرنامج الولاء', 'اربح نقاط مع كل عملية شراء وحولها لأموال', 'اعرف المزيد', 'page', '/loyalty', 'home_middle', 5),
+('شحن مجاني! 🚚', 'على الطلبات فوق 600 جنيه', 'ابدأ التسوق', 'page', '/products', 'cart', 8)
+ON CONFLICT DO NOTHING;
 
 -- ============================================
--- Admin Enhanced System Installed! ✅
+-- ALL D6NE! ✅
 -- ============================================

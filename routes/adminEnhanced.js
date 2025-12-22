@@ -485,6 +485,103 @@ router.get('/returns', [verifyToken, isAdmin], async (req, res) => {
 });
 
 /**
+ * POST /api/admin-enhanced/returns/create-from-order
+ * Create a new return from order code (manual creation by admin)
+ */
+router.post('/returns/create-from-order', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { order_code, return_reason, return_notes } = req.body;
+        
+        if (!order_code || !return_reason) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'كود الطلب وسبب المرتجع مطلوبان' 
+            });
+        }
+        
+        // Find order by code (order_number)
+        const { rows: orders } = await query(
+            'SELECT * FROM orders WHERE order_number = $1',
+            [order_code]
+        );
+        
+        if (orders.length === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'لم يتم العثور على الطلب بهذا الكود' 
+            });
+        }
+        
+        const order = orders[0];
+        
+        // Check if return already exists for this order
+        const { rows: existingReturns } = await query(
+            'SELECT * FROM returns WHERE order_id = $1',
+            [order.id]
+        );
+        
+        if (existingReturns.length > 0) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'يوجد بالفعل طلب مرتجع لهذا الطلب' 
+            });
+        }
+        
+        // Generate return code
+        const returnCode = `RET-${Date.now()}-${order.id}`;
+        
+        // Get order items
+        const items = order.items || [];
+        
+        // Create return
+        const { rows: newReturn } = await query(`
+            INSERT INTO returns (
+                return_code,
+                order_id,
+                user_id,
+                return_reason,
+                return_notes,
+                items,
+                total_amount,
+                refund_amount,
+                status,
+                created_at,
+                updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+            RETURNING *
+        `, [
+            returnCode,
+            order.id,
+            order.user_id,
+            return_reason,
+            return_notes || '',
+            JSON.stringify(items),
+            order.total,
+            0, // Refund amount to be set on approval
+            'pending'
+        ]);
+        
+        res.json({
+            success: true,
+            message: 'تم إنشاء طلب المرتجع بنجاح',
+            data: newReturn[0]
+        });
+    } catch (error) {
+        console.error('Error creating return:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'فشل إنشاء طلب المرتجع',
+            error: error.message 
+        });
+    }
+});
+    } catch (error) {
+        console.error('Error fetching returns:', error);
+        res.status(500).json({ error: 'Failed to fetch returns' });
+    }
+});
+
+/**
  * GET /api/admin-enhanced/returns/:id
  * Get single return details
  */
