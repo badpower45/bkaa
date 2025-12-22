@@ -592,7 +592,7 @@ router.get('/orders/:orderCode', [verifyToken, isAdmin], async (req, res) => {
                 u.phone as customer_phone
             FROM orders o
             LEFT JOIN users u ON o.user_id = u.id
-            WHERE o.order_number = $1
+            WHERE o.order_code = $1 OR o.id::text = $1
         `, [orderCode]);
         
         if (rows.length === 0) {
@@ -602,9 +602,15 @@ router.get('/orders/:orderCode', [verifyToken, isAdmin], async (req, res) => {
             });
         }
         
+        const order = rows[0];
+        // Parse items if string
+        if (order.items && typeof order.items === 'string') {
+            order.items = JSON.parse(order.items);
+        }
+        
         res.json({
             success: true,
-            data: rows[0]
+            data: order
         });
     } catch (error) {
         console.error('Error fetching order:', error);
