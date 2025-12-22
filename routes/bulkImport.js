@@ -135,6 +135,50 @@ function mapRowToProduct(row, rowIndex) {
         product.discount_percentage = 0;
     }
     
+    // Clean and validate expiry date
+    if (product.expiry_date) {
+        try {
+            let dateStr = String(product.expiry_date).trim();
+            
+            // Remove all spaces from date string (handles "2026 - 6 - 12" format)
+            dateStr = dateStr.replace(/\s+/g, '');
+            
+            // Handle different date formats
+            if (dateStr.includes('-')) {
+                // Format: "2026-6-12" or "2026-06-12"
+                const parts = dateStr.split('-');
+                if (parts.length === 3) {
+                    const year = parts[0].padStart(4, '0');
+                    const month = parts[1].padStart(2, '0');
+                    const day = parts[2].padStart(2, '0');
+                    dateStr = `${year}-${month}-${day}`;
+                }
+            } else if (dateStr.includes('/')) {
+                // Format: "12/6/2026" (DD/MM/YYYY)
+                const parts = dateStr.split('/');
+                if (parts.length === 3) {
+                    const day = parts[0].padStart(2, '0');
+                    const month = parts[1].padStart(2, '0');
+                    const year = parts[2].padStart(4, '0');
+                    dateStr = `${year}-${month}-${day}`;
+                }
+            }
+            
+            // Validate date
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) {
+                warnings.push('تاريخ الصلاحية غير صحيح - سيتم تجاهله');
+                product.expiry_date = null;
+            } else {
+                // Format as YYYY-MM-DD for PostgreSQL
+                product.expiry_date = dateStr;
+            }
+        } catch (err) {
+            warnings.push('خطأ في معالجة تاريخ الصلاحية - سيتم تجاهله');
+            product.expiry_date = null;
+        }
+    }
+    
     return { product, errors, warnings, rowIndex };
 }
 

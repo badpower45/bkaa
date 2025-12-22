@@ -446,7 +446,7 @@ router.get('/returns', [verifyToken, isAdmin], async (req, res) => {
         const { rows } = await query(`
             SELECT 
                 r.*,
-                o.order_number,
+                o.id as order_number,
                 o.total as order_total,
                 u.name as customer_name,
                 u.email as customer_email,
