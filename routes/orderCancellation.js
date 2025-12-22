@@ -155,14 +155,18 @@ router.post('/cancel/:orderId', verifyToken, async (req, res) => {
         // Notify distribution page (via notification system)
         await query(`
             INSERT INTO notifications (
-                user_id, type, title, message, metadata
-            ) VALUES ($1, 'order_cancelled', $2, $3, $4)
+                user_id, type, title, data
+            ) VALUES ($1, $2, $3, $4)
         `, [
             null, // Admin notification
+            'order_cancelled',
             'تم إلغاء طلب',
-            `الطلب #${orderId} تم إلغاؤه من قبل العميل: ${order.name}`,
-            JSON.stringify({ order_id: orderId, user_id: userId })
-        ]);
+            JSON.stringify({ 
+                order_id: orderId, 
+                user_id: userId,
+                message: `الطلب #${orderId} تم إلغاؤه من قبل العميل: ${order.name}`
+            })
+        ]).catch(err => console.log('Notification insert skipped:', err.message));
 
         await query('COMMIT');
 

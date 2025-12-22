@@ -41,12 +41,11 @@ router.post('/add', verifyToken, async (req, res) => {
             const { rows } = await query(`
                 UPDATE product_reviews 
                 SET rating = $1, 
-                    comment = $2, 
-                    images = $3,
+                    comment = $2,
                     updated_at = NOW()
-                WHERE id = $4
+                WHERE id = $3
                 RETURNING *
-            `, [rating, comment, JSON.stringify(images || []), existingReview[0].id]);
+            `, [rating, comment, existingReview[0].id]);
 
             // Recalculate product rating
             await updateProductRating(product_id);
@@ -61,10 +60,10 @@ router.post('/add', verifyToken, async (req, res) => {
         // Insert new review
         const { rows } = await query(`
             INSERT INTO product_reviews (
-                user_id, product_id, rating, comment, images
-            ) VALUES ($1, $2, $3, $4, $5)
+                user_id, product_id, rating, comment
+            ) VALUES ($1, $2, $3, $4)
             RETURNING *
-        `, [user_id, product_id, rating, comment, JSON.stringify(images || [])]);
+        `, [user_id, product_id, rating, comment]);
 
         // Recalculate product rating
         await updateProductRating(product_id);
@@ -104,7 +103,6 @@ router.get('/product/:productId', async (req, res) => {
             SELECT 
                 pr.*,
                 u.name as user_name,
-                u.image as user_image,
                 (SELECT COUNT(*) FROM product_reviews WHERE product_id = pr.product_id) as total_reviews
             FROM product_reviews pr
             JOIN users u ON pr.user_id = u.id
