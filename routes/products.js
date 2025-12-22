@@ -637,10 +637,11 @@ router.post('/upload', [verifyToken, isAdmin, secureExcelUpload.single('file'), 
                 const barcode = p.barcode || p.parcode || null; // Support both spellings
                 const subcategory = p.subcategory || p["التصنيف الفرعي"] || null;
                 const category = p.category || p["التصنيف الاساسي"] || 'Uncategorized';
+                const brandId = p.brand_id || p.brandId || p["البراند"] || null;
 
                 const sql = `
-                    INSERT INTO products (id, name, category, subcategory, image, weight, rating, reviews, is_organic, is_new, barcode)
-                    VALUES ($1, $2, $3, $4, $5, $6, 0, 0, $7, $8, $9)
+                    INSERT INTO products (id, name, category, subcategory, image, weight, rating, reviews, is_organic, is_new, barcode, brand_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, 0, 0, $7, $8, $9, $10)
                     ON CONFLICT (id) DO UPDATE SET
                         name = EXCLUDED.name,
                         category = EXCLUDED.category,
@@ -649,7 +650,8 @@ router.post('/upload', [verifyToken, isAdmin, secureExcelUpload.single('file'), 
                         weight = EXCLUDED.weight,
                         is_organic = EXCLUDED.is_organic,
                         is_new = EXCLUDED.is_new,
-                        barcode = EXCLUDED.barcode
+                        barcode = EXCLUDED.barcode,
+                        brand_id = EXCLUDED.brand_id
                 `;
 
                 await query(sql, [
@@ -661,7 +663,8 @@ router.post('/upload', [verifyToken, isAdmin, secureExcelUpload.single('file'), 
                     p.weight || '',
                     isOrganic,
                     isNew,
-                    barcode
+                    barcode,
+                    brandId
                 ]);
 
                 // If branch and price info provided, also add to branch_products

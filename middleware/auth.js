@@ -69,9 +69,17 @@ export const isAdmin = (req, res, next) => {
 };
 
 export const isEmployee = (req, res, next) => {
-    const employeeRoles = ['admin', 'owner', 'manager', 'employee', 'distributor'];
+    const employeeRoles = ['admin', 'owner', 'manager', 'employee', 'distributor', 'returns_manager'];
     if (!employeeRoles.includes(req.userRole)) {
         return res.status(403).send({ message: "Require Employee Role!" });
+    }
+    next();
+};
+
+export const isReturnsManager = (req, res, next) => {
+    const allowedRoles = ['admin', 'owner', 'manager', 'returns_manager'];
+    if (!allowedRoles.includes(req.userRole)) {
+        return res.status(403).send({ message: "Require Returns Manager Role!" });
     }
     next();
 };
