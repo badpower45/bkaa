@@ -271,9 +271,13 @@ router.get('/validate/:barcode', async (req, res) => {
         res.json({
             valid: true,
             barcode: {
+                id: barcodeData.id,
                 code: barcodeData.barcode,
-                value: barcodeData.monetary_value,
-                points: barcodeData.points_value,
+                barcode: barcodeData.barcode, // for consistency
+                monetary_value: barcodeData.monetary_value,
+                value: barcodeData.monetary_value, // backward compatibility
+                points_value: barcodeData.points_value,
+                points: barcodeData.points_value, // backward compatibility
                 owner: barcodeData.owner_name,
                 expires_at: barcodeData.expires_at
             }
