@@ -235,6 +235,50 @@ router.get('/', async (req, res) => {
     }
 });
 
+// Search Products - MUST BE BEFORE /:id to avoid matching 'search' as an id
+router.get('/search', async (req, res) => {
+    const { q, branchId } = req.query;
+
+    if (!q) {
+        return res.status(400).json({ error: "Search query required" });
+    }
+
+    if (!branchId) {
+        return res.status(400).json({ error: "Branch ID required" });
+    }
+
+    try {
+        const sql = `
+            SELECT 
+                p.*, 
+                bp.price, 
+                bp.discount_price, 
+                bp.stock_quantity, 
+                bp.reserved_quantity,
+                bp.is_available,
+                (bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) as available_stock,
+                CASE 
+                    WHEN (bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) > 0 THEN TRUE
+                    ELSE FALSE
+                END as in_stock
+            FROM products p
+            JOIN branch_products bp ON p.id = bp.product_id
+            WHERE bp.branch_id = $1 
+            AND (p.name ILIKE $2 OR p.description ILIKE $2 OR p.barcode ILIKE $2 OR p.category ILIKE $2)
+            AND bp.is_available = TRUE
+            ORDER BY 
+                CASE WHEN (bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) > 0 THEN 0 ELSE 1 END,
+                p.name
+        `;
+        const { rows } = await query(sql, [branchId, `%${q}%`]);
+        
+        res.json({ message: 'success', data: rows });
+    } catch (err) {
+        console.error("Error searching products:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Get single product
 router.get('/:id', async (req, res) => {
     const { id } = req.params;
@@ -567,50 +611,6 @@ router.get('/category/:category', async (req, res) => {
         res.json({ message: 'success', data: rows });
     } catch (err) {
         console.error("Error fetching products by category:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Search Products
-router.get('/search', async (req, res) => {
-    const { q, branchId } = req.query;
-
-    if (!q) {
-        return res.status(400).json({ error: "Search query required" });
-    }
-
-    if (!branchId) {
-        return res.status(400).json({ error: "Branch ID required" });
-    }
-
-    try {
-        const sql = `
-            SELECT 
-                p.*, 
-                bp.price, 
-                bp.discount_price, 
-                bp.stock_quantity, 
-                bp.reserved_quantity,
-                bp.is_available,
-                (bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) as available_stock,
-                CASE 
-                    WHEN (bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) > 0 THEN TRUE
-                    ELSE FALSE
-                END as in_stock
-            FROM products p
-            JOIN branch_products bp ON p.id = bp.product_id
-            WHERE bp.branch_id = $1 
-            AND (p.name ILIKE $2 OR p.description ILIKE $2 OR p.barcode ILIKE $2 OR p.category ILIKE $2)
-            AND bp.is_available = TRUE
-            ORDER BY 
-                CASE WHEN (bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) > 0 THEN 0 ELSE 1 END,
-                p.name
-        `;
-        const { rows } = await query(sql, [branchId, `%${q}%`]);
-        
-        res.json({ message: 'success', data: rows });
-    } catch (err) {
-        console.error("Error searching products:", err);
         res.status(500).json({ error: err.message });
     }
 });
