@@ -530,7 +530,7 @@ router.get('/analytics/by-category', [verifyToken, isAdmin], async (req, res) =>
                     ELSE bp.price * bp.stock_quantity END) as inventory_value
             FROM products p
             JOIN branch_products bp ON p.id = bp.product_id
-            WHERE p.is_active = TRUE ${branchFilter}
+            WHERE 1=1 ${branchFilter}
             GROUP BY p.category
             ORDER BY total_stock DESC
         `, params);
