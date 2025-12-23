@@ -47,9 +47,8 @@ router.get('/', async (req, res) => {
                 phone2,
                 maps_link,
                 google_maps_link,
-                location_lat as latitude,
-                location_lng as longitude,
-                coverage_radius_km,
+                latitude,
+                longitude,
                 delivery_radius,
                 is_active,
                 governorate,
@@ -93,9 +92,8 @@ router.get('/location/nearest', async (req, res) => {
                 phone2,
                 maps_link,
                 google_maps_link,
-                location_lat as latitude,
-                location_lng as longitude,
-                coverage_radius_km,
+                latitude,
+                longitude,
                 delivery_radius,
                 is_active,
                 governorate,
@@ -103,15 +101,15 @@ router.get('/location/nearest', async (req, res) => {
                 pickup_enabled,
                 (
                     6371 * acos(
-                        cos(radians($1)) * cos(radians(location_lat)) *
-                        cos(radians(location_lng) - radians($2)) +
-                        sin(radians($1)) * sin(radians(location_lat))
+                        cos(radians($1)) * cos(radians(latitude)) *
+                        cos(radians(longitude) - radians($2)) +
+                        sin(radians($1)) * sin(radians(latitude))
                     )
                 ) AS distance_km
             FROM branches
             WHERE is_active = TRUE 
-              AND location_lat IS NOT NULL 
-              AND location_lng IS NOT NULL
+              AND latitude IS NOT NULL 
+              AND longitude IS NOT NULL
             ORDER BY distance_km ASC
             LIMIT 1
         `;
@@ -123,8 +121,7 @@ router.get('/location/nearest', async (req, res) => {
             const { rows: fallback } = await query(`
                 SELECT 
                     id, name, name_ar, address, phone, phone2, maps_link, google_maps_link,
-                    location_lat as latitude, location_lng as longitude,
-                    coverage_radius_km, delivery_radius, is_active, governorate, city, pickup_enabled
+                    latitude, longitude, delivery_radius, is_active, governorate, city, pickup_enabled
                 FROM branches 
                 WHERE is_active = TRUE 
                 ORDER BY id 
@@ -166,9 +163,8 @@ router.get('/:id', async (req, res) => {
                 phone2,
                 maps_link,
                 google_maps_link,
-                location_lat as latitude,
-                location_lng as longitude,
-                coverage_radius_km,
+                latitude,
+                longitude,
                 delivery_radius,
                 is_active,
                 governorate,
@@ -211,9 +207,8 @@ router.get('/nearby', async (req, res) => {
                 phone2,
                 maps_link,
                 google_maps_link,
-                location_lat as latitude,
-                location_lng as longitude,
-                coverage_radius_km,
+                latitude,
+                longitude,
                 delivery_radius,
                 is_active,
                 governorate,
@@ -221,20 +216,20 @@ router.get('/nearby', async (req, res) => {
                 pickup_enabled,
                 (
                     6371 * acos(
-                        cos(radians($1)) * cos(radians(location_lat)) *
-                        cos(radians(location_lng) - radians($2)) +
-                        sin(radians($1)) * sin(radians(location_lat))
+                        cos(radians($1)) * cos(radians(latitude)) *
+                        cos(radians(longitude) - radians($2)) +
+                        sin(radians($1)) * sin(radians(latitude))
                     )
                 ) AS distance_km
             FROM branches
             WHERE is_active = TRUE
-              AND location_lat IS NOT NULL 
-              AND location_lng IS NOT NULL
+              AND latitude IS NOT NULL 
+              AND longitude IS NOT NULL
               AND (
                   6371 * acos(
-                      cos(radians($1)) * cos(radians(location_lat)) *
-                      cos(radians(location_lng) - radians($2)) +
-                      sin(radians($1)) * sin(radians(location_lat))
+                      cos(radians($1)) * cos(radians(latitude)) *
+                      cos(radians(longitude) - radians($2)) +
+                      sin(radians($1)) * sin(radians(latitude))
                   )
               ) <= $3
             ORDER BY distance_km
