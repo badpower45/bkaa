@@ -461,4 +461,229 @@ router.get('/low-stock', [verifyToken, isAdmin], async (req, res) => {
     }
 });
 
+/**
+ * GET /api/inventory/analytics/by-branch
+ * Get inventory analytics grouped by branch
+ */
+router.get('/analytics/by-branch', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { rows } = await query(`
+            SELECT 
+                b.id as branch_id,
+                b.name as branch_name,
+                b.city,
+                COUNT(DISTINCT bp.product_id) as total_products,
+                SUM(bp.stock_quantity) as total_stock,
+                SUM(bp.reserved_quantity) as reserved_stock,
+                SUM(bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) as available_stock,
+                COUNT(CASE WHEN bp.stock_quantity = 0 THEN 1 END) as out_of_stock_count,
+                COUNT(CASE WHEN bp.stock_quantity <= 5 THEN 1 END) as low_stock_count,
+                SUM(CASE WHEN bp.discount_price IS NOT NULL THEN bp.discount_price * bp.stock_quantity 
+                    ELSE bp.price * bp.stock_quantity END) as inventory_value
+            FROM branches b
+            LEFT JOIN branch_products bp ON b.id = bp.branch_id
+            WHERE b.is_active = TRUE
+            GROUP BY b.id, b.name, b.city
+            ORDER BY total_stock DESC
+        `);
+
+        res.json({
+            success: true,
+            data: rows
+        });
+    } catch (error) {
+        console.error('Error fetching branch analytics:', error);
+        res.status(500).json({
+            success: false,
+            message: 'فشل جلب تحليلات الفروع',
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/inventory/analytics/by-category
+ * Get inventory analytics grouped by category
+ */
+router.get('/analytics/by-category', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { branch_id } = req.query;
+        const params = [];
+        let branchFilter = '';
+
+        if (branch_id) {
+            params.push(branch_id);
+            branchFilter = 'AND bp.branch_id = $1';
+        }
+
+        const { rows } = await query(`
+            SELECT 
+                p.category,
+                COUNT(DISTINCT p.id) as total_products,
+                SUM(bp.stock_quantity) as total_stock,
+                SUM(bp.reserved_quantity) as reserved_stock,
+                SUM(bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) as available_stock,
+                COUNT(CASE WHEN bp.stock_quantity = 0 THEN 1 END) as out_of_stock_count,
+                COUNT(CASE WHEN bp.stock_quantity <= 5 THEN 1 END) as low_stock_count,
+                AVG(CASE WHEN bp.discount_price IS NOT NULL THEN bp.discount_price ELSE bp.price END) as avg_price,
+                SUM(CASE WHEN bp.discount_price IS NOT NULL THEN bp.discount_price * bp.stock_quantity 
+                    ELSE bp.price * bp.stock_quantity END) as inventory_value
+            FROM products p
+            JOIN branch_products bp ON p.id = bp.product_id
+            WHERE p.is_active = TRUE ${branchFilter}
+            GROUP BY p.category
+            ORDER BY total_stock DESC
+        `, params);
+
+        res.json({
+            success: true,
+            data: rows
+        });
+    } catch (error) {
+        console.error('Error fetching category analytics:', error);
+        res.status(500).json({
+            success: false,
+            message: 'فشل جلب تحليلات التصنيفات',
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/inventory/analytics/high-demand
+ * Get high demand products based on order history
+ */
+router.get('/analytics/high-demand', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { days = 30, limit = 50, branch_id } = req.query;
+        const params = [days, limit];
+        let branchFilter = '';
+
+        if (branch_id) {
+            params.push(branch_id);
+            branchFilter = 'AND o.branch_id = $3';
+        }
+
+        const { rows } = await query(`
+            SELECT 
+                p.id,
+                p.name,
+                p.barcode,
+                p.category,
+                COUNT(DISTINCT o.id) as order_count,
+                SUM(oi.quantity) as total_sold,
+                AVG(oi.quantity) as avg_quantity_per_order,
+                SUM(oi.quantity * oi.price) as total_revenue,
+                bp.stock_quantity as current_stock,
+                bp.reserved_quantity,
+                CASE 
+                    WHEN bp.stock_quantity <= 5 THEN 'LOW_STOCK'
+                    WHEN bp.stock_quantity <= 10 THEN 'MEDIUM_STOCK'
+                    ELSE 'GOOD_STOCK'
+                END as stock_status,
+                ROUND(bp.stock_quantity::numeric / NULLIF(SUM(oi.quantity), 0) * $1, 1) as days_of_stock_remaining
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.id
+            JOIN products p ON oi.product_id = p.id
+            LEFT JOIN branch_products bp ON p.id = bp.product_id 
+                ${branch_id ? 'AND bp.branch_id = $3' : ''}
+            WHERE o.created_at >= NOW() - INTERVAL '1 day' * $1
+                AND o.status IN ('pending', 'confirmed', 'delivered')
+                ${branchFilter}
+            GROUP BY p.id, p.name, p.barcode, p.category, bp.stock_quantity, bp.reserved_quantity
+            ORDER BY total_sold DESC
+            LIMIT $2
+        `, params);
+
+        res.json({
+            success: true,
+            data: rows,
+            period_days: days
+        });
+    } catch (error) {
+        console.error('Error fetching high demand products:', error);
+        res.status(500).json({
+            success: false,
+            message: 'فشل جلب المنتجات الأكثر طلباً',
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/inventory/analytics/dashboard
+ * Get comprehensive dashboard statistics
+ */
+router.get('/analytics/dashboard', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { branch_id } = req.query;
+        const params = branch_id ? [branch_id] : [];
+        const branchFilter = branch_id ? 'WHERE bp.branch_id = $1' : '';
+
+        // Overall stats
+        const { rows: [stats] } = await query(`
+            SELECT 
+                COUNT(DISTINCT bp.product_id) as total_products,
+                COUNT(DISTINCT bp.branch_id) as total_branches,
+                SUM(bp.stock_quantity) as total_stock,
+                SUM(bp.reserved_quantity) as total_reserved,
+                SUM(bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) as total_available,
+                COUNT(CASE WHEN bp.stock_quantity = 0 THEN 1 END) as out_of_stock_count,
+                COUNT(CASE WHEN bp.stock_quantity <= 5 AND bp.stock_quantity > 0 THEN 1 END) as low_stock_count,
+                COUNT(CASE WHEN bp.stock_quantity > 5 THEN 1 END) as good_stock_count,
+                SUM(CASE WHEN bp.discount_price IS NOT NULL THEN bp.discount_price * bp.stock_quantity 
+                    ELSE bp.price * bp.stock_quantity END) as total_inventory_value
+            FROM branch_products bp
+            ${branchFilter}
+        `, params);
+
+        // Recent transactions
+        const transactionParams = branch_id ? [10, branch_id] : [10];
+        const transactionFilter = branch_id ? 'AND it.location_id = $2' : '';
+        const { rows: recentTransactions } = await query(`
+            SELECT 
+                it.transaction_type,
+                it.quantity,
+                it.created_at,
+                p.name as product_name,
+                il.name as location_name
+            FROM inventory_transactions it
+            JOIN products p ON it.product_id = p.id
+            LEFT JOIN inventory_locations il ON it.location_id = il.id
+            WHERE 1=1 ${transactionFilter}
+            ORDER BY it.created_at DESC
+            LIMIT $1
+        `, transactionParams);
+
+        // Active alerts count
+        const alertParams = branch_id ? [branch_id] : [];
+        const alertFilter = branch_id ? 'AND ia.location_id = $1' : '';
+        const { rows: [alertStats] } = await query(`
+            SELECT 
+                COUNT(*) as total_alerts,
+                COUNT(CASE WHEN severity = 'critical' THEN 1 END) as critical_alerts,
+                COUNT(CASE WHEN severity = 'high' THEN 1 END) as high_alerts,
+                COUNT(CASE WHEN severity = 'medium' THEN 1 END) as medium_alerts
+            FROM inventory_alerts ia
+            WHERE is_resolved = false ${alertFilter}
+        `, alertParams);
+
+        res.json({
+            success: true,
+            data: {
+                statistics: stats,
+                alerts: alertStats,
+                recent_transactions: recentTransactions
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching dashboard analytics:', error);
+        res.status(500).json({
+            success: false,
+            message: 'فشل جلب إحصائيات لوحة التحكم',
+            error: error.message
+        });
+    }
+});
+
 export default router;
