@@ -76,7 +76,7 @@ router.post('/notifications/send', [verifyToken, isAdmin], async (req, res) => {
         for (const user of users) {
             await query(`
                 INSERT INTO notifications (
-                    user_id, title, message, type, data, is_read
+                    user_id, title, body, type, data, is_read
                 ) VALUES ($1, $2, $3, $4, $5, false)
             `, [
                 user.id, title, body, 'push', 
