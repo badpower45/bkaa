@@ -8,6 +8,72 @@ import { notifyDriverNewOrder, notifyCustomerOrderUpdate, notifyDistributorsNewO
 let schedulerInterval = null;
 
 /**
+ * إرسال تذكيرات دورية للموظفين بالطلبات المعينة
+ * كل 1 دقيقة - تنبيه على الطلبات المنتظرة
+ */
+const sendPendingOrderReminders = async () => {
+    try {
+        // جلب الطلبات المعينة وفي انتظار القبول
+        const { rows: pendingOrders } = await query(`
+            SELECT 
+                oa.id, 
+                oa.order_id, 
+                oa.delivery_staff_id,
+                oa.assigned_at,
+                oa.accept_deadline,
+                oa.reminder_count,
+                EXTRACT(EPOCH FROM (oa.accept_deadline - NOW()))/60 as minutes_remaining,
+                o.total,
+                o.branch_id,
+                ds.name as driver_name
+            FROM order_assignments oa
+            JOIN orders o ON oa.order_id = o.id
+            LEFT JOIN delivery_staff ds ON oa.delivery_staff_id = ds.id
+            WHERE oa.status = 'assigned' 
+              AND oa.accept_deadline IS NOT NULL 
+              AND oa.accept_deadline > NOW()
+              AND EXTRACT(EPOCH FROM (NOW() - oa.assigned_at)) > 60
+        `);
+
+        for (const order of pendingOrders) {
+            const minutesRemaining = Math.ceil(order.minutes_remaining);
+            const reminderCount = order.reminder_count || 0;
+
+            // إرسال تذكير كل دقيقة
+            try {
+                // تحديث عداد التذكيرات
+                await query(`
+                    UPDATE order_assignments 
+                    SET reminder_count = COALESCE(reminder_count, 0) + 1
+                    WHERE id = $1
+                `, [order.id]);
+
+                // إرسال إشعار للموظف
+                notifyDriverNewOrder(order.delivery_staff_id, {
+                    orderId: order.order_id,
+                    type: 'reminder',
+                    minutesRemaining,
+                    reminderNumber: reminderCount + 1,
+                    message: `⏰ تذكير: لديك ${minutesRemaining} دقيقة متبقية لقبول الطلب #${order.order_id}`,
+                    urgent: minutesRemaining <= 2
+                });
+
+                console.log(`🔔 Reminder ${reminderCount + 1} sent to driver ${order.driver_name} for order #${order.order_id} (${minutesRemaining} min remaining)`);
+
+            } catch (err) {
+                console.error(`Error sending reminder for order ${order.order_id}:`, err);
+            }
+        }
+
+        if (pendingOrders.length > 0) {
+            console.log(`🔔 Sent ${pendingOrders.length} order reminders`);
+        }
+    } catch (err) {
+        console.error('Error in sendPendingOrderReminders:', err);
+    }
+};
+
+/**
  * فحص الطلبات المنتهية مهلة قبولها
  * يتم تشغيلها كل دقيقة
  */
@@ -151,6 +217,7 @@ export const startScheduler = () => {
 
     // تشغيل فحص الطلبات المنتهية كل دقيقة
     schedulerInterval = setInterval(async () => {
+        await sendPendingOrderReminders(); // إرسال تذكيرات دورية
         await checkExpiredOrderAssignments();
         await checkLateOrders();
     }, 60 * 1000); // كل دقيقة
@@ -159,6 +226,7 @@ export const startScheduler = () => {
     setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 
     // تشغيل فوري عند البدء
+    sendPendingOrderReminders();
     checkExpiredOrderAssignments();
     checkLateOrders();
 
