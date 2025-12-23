@@ -33,6 +33,7 @@ router.post('/', validate(orderSchema), async (req, res) => {
     const {
         userId, total, items, branchId, deliverySlotId, paymentMethod,
         shippingDetails, deliveryAddress, couponId, couponCode, couponDiscount,
+        barcodeCode, barcodeId, barcodeDiscount,
         googleMapsLink, deliveryLatitude, deliveryLongitude
     } = req.body;
     const status = 'pending';
@@ -156,6 +157,56 @@ router.post('/', validate(orderSchema), async (req, res) => {
                 );
             } catch (couponErr) {
                 console.log('⚠️ Could not record coupon usage (table may not exist):', couponErr.message);
+            }
+        }
+
+        // إذا تم استخدام باركود نقاط الولاء
+        if (barcodeCode && barcodeDiscount > 0 && actualUserId) {
+            try {
+                // التحقق من صلاحية الباركود واستخدامه
+                const { rows: barcodeRows } = await query(
+                    `SELECT * FROM loyalty_barcodes 
+                     WHERE barcode = $1 AND status = 'active' 
+                     AND expires_at > NOW()
+                     FOR UPDATE`,
+                    [barcodeCode]
+                );
+
+                if (barcodeRows.length === 0) {
+                    console.log('⚠️ Barcode not found or invalid:', barcodeCode);
+                } else {
+                    const barcode = barcodeRows[0];
+                    
+                    // تحديث حالة الباركود إلى "مستخدم"
+                    await query(
+                        `UPDATE loyalty_barcodes 
+                         SET status = 'used', 
+                             used_at = NOW(), 
+                             used_by_user_id = $1,
+                             order_id = $2,
+                             updated_at = NOW()
+                         WHERE id = $3`,
+                        [actualUserId, orderId, barcode.id]
+                    );
+
+                    // تسجيل معاملة سحب النقاط في loyalty_transactions
+                    await query(
+                        `INSERT INTO loyalty_transactions 
+                         (user_id, points, type, description, order_id, barcode_id)
+                         VALUES ($1, $2, 'debit', $3, $4, $5)`,
+                        [
+                            barcode.user_id, // صاحب الباركود الأصلي
+                            -barcode.points_value,
+                            `استخدام باركود ${barcodeCode} في طلب #${orderId}`,
+                            orderId,
+                            barcode.id
+                        ]
+                    );
+
+                    console.log('✅ Barcode used successfully:', barcodeCode, 'Value:', barcode.monetary_value);
+                }
+            } catch (barcodeErr) {
+                console.log('⚠️ Could not process barcode (table may not exist):', barcodeErr.message);
             }
         }
 
