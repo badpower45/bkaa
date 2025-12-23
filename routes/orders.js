@@ -499,23 +499,24 @@ router.put('/:id/status', [verifyToken, isAdmin], async (req, res) => {
         const order = orderRows[0];
         const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
 
-        // If moving from pending to any active status (confirmed, preparing, ready, out_for_delivery, delivered)
-        // AND we haven't deducted stock yet (assuming pending means reserved but not deducted)
-        const activeStatuses = ['confirmed', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
+        // If moving from pending to confirmed/preparing: deduct from stock but keep reserved
+        // (Stock was already reserved when order was created)
+        const activeStatuses = ['confirmed', 'preparing'];
         if (activeStatuses.includes(status) && order.status === 'pending') {
             for (const item of items) {
+                // Deduct from stock_quantity, release from reserved
                 await query(
                     `UPDATE branch_products 
                      SET stock_quantity = stock_quantity - $1,
-                         reserved_quantity = reserved_quantity - $1
+                         reserved_quantity = GREATEST(reserved_quantity - $1, 0)
                      WHERE branch_id = $2 AND product_id = $3`,
                     [item.quantity, order.branch_id, item.id || item.productId]
                 );
             }
         }
 
-        // If cancelling order: release reserved inventory and slot
-        if (status === 'cancelled') {
+        // If cancelling order from pending: release reserved inventory only
+        if (status === 'cancelled' && order.status === 'pending') {
             for (const item of items) {
                 await query(
                     "UPDATE branch_products SET reserved_quantity = GREATEST(reserved_quantity - $1, 0) WHERE branch_id = $2 AND product_id = $3",
@@ -530,6 +531,29 @@ router.put('/:id/status', [verifyToken, isAdmin], async (req, res) => {
                     [order.delivery_slot_id]
                 );
             }
+        }
+
+        // If cancelling order from confirmed/delivered: return stock
+        if (status === 'cancelled' && (order.status === 'confirmed' || order.status === 'delivered')) {
+            for (const item of items) {
+                await query(
+                    "UPDATE branch_products SET stock_quantity = stock_quantity + $1 WHERE branch_id = $2 AND product_id = $3",
+                    [item.quantity, order.branch_id, item.id || item.productId]
+                );
+            }
+        }
+
+        // If returning order: return stock to warehouse
+        if (status === 'returned' && order.status === 'delivered') {
+            for (const item of items) {
+                await query(
+                    `UPDATE branch_products 
+                     SET stock_quantity = stock_quantity + $1
+                     WHERE branch_id = $2 AND product_id = $3`,
+                    [item.quantity, order.branch_id, item.id || item.productId]
+                );
+            }
+            console.log(`📦 Returned ${items.length} items to stock for order ${orderId}`);
         }
 
         // Award Loyalty Points ONLY when order is delivered
