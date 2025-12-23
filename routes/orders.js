@@ -554,14 +554,26 @@ router.put('/:id/status', [verifyToken, isAdmin], async (req, res) => {
         }
 
         // Deduct Loyalty Points when order is returned or cancelled (if was delivered before)
+        console.log(`🔍 Checking loyalty deduction: newStatus=${status}, oldStatus=${order.status}, total=${order.total}, userId=${order.user_id}`);
+        
         if ((status === 'returned' || status === 'cancelled') && order.status === 'delivered') {
             const points = Math.floor(Number(order.total) || 0);
+            console.log(`🔍 Deduction condition MET! Points to deduct: ${points}`);
+            
             if (points > 0 && order.user_id) {
+                // Get current points before deduction
+                const { rows: userRows } = await query("SELECT loyalty_points FROM users WHERE id = $1", [order.user_id]);
+                const currentPoints = userRows[0]?.loyalty_points || 0;
+                console.log(`🔍 User ${order.user_id} current points: ${currentPoints}`);
+                
                 // Deduct points from user
-                await query(
-                    "UPDATE users SET loyalty_points = GREATEST(COALESCE(loyalty_points, 0) - $1, 0) WHERE id = $2",
+                const updateResult = await query(
+                    "UPDATE users SET loyalty_points = GREATEST(COALESCE(loyalty_points, 0) - $1, 0) WHERE id = $2 RETURNING loyalty_points",
                     [points, order.user_id]
                 );
+                
+                const newPoints = updateResult.rows[0]?.loyalty_points;
+                console.log(`✅ Points updated from ${currentPoints} to ${newPoints}`);
                 
                 // Create loyalty points history record
                 await query(
@@ -571,7 +583,11 @@ router.put('/:id/status', [verifyToken, isAdmin], async (req, res) => {
                 );
                 
                 console.log(`⚠️ Deducted ${points} loyalty points from user ${order.user_id} for returned/cancelled order ${orderId}`);
+            } else {
+                console.log(`⚠️ Skipping deduction: points=${points}, userId=${order.user_id}`);
             }
+        } else {
+            console.log(`⚠️ Deduction condition NOT met`);
         }
 
         // Update order status
