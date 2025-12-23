@@ -23,9 +23,17 @@ router.post('/create-redemption', verifyToken, async (req, res) => {
         const userId = req.user.id;
         const { points_to_redeem } = req.body;
 
-        if (!points_to_redeem || points_to_redeem < 50) {
+        // Validation: minimum 1000 points
+        if (!points_to_redeem || points_to_redeem < 1000) {
             return res.status(400).json({ 
-                error: 'يجب استبدال 50 نقطة على الأقل' 
+                error: 'الحد الأدنى للاستبدال 1000 نقطة' 
+            });
+        }
+
+        // Validation: must be multiple of 1000
+        if (points_to_redeem % 1000 !== 0) {
+            return res.status(400).json({ 
+                error: 'يجب أن يكون عدد النقاط من مضاعفات 1000 (مثال: 1000، 2000، 3000)' 
             });
         }
 
@@ -69,8 +77,9 @@ router.post('/create-redemption', verifyToken, async (req, res) => {
             existing = check.rows;
         }
 
-        // Calculate monetary value (1 point = 1 EGP)
-        const monetaryValue = points_to_redeem;
+        // Calculate monetary value (1000 points = 35 EGP)
+        const couponsCount = points_to_redeem / 1000;
+        const monetaryValue = couponsCount * 35;
 
         // Deduct points from user
         await query(
