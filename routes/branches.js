@@ -37,7 +37,26 @@ router.get('/', async (req, res) => {
     const { active } = req.query;
 
     try {
-        let sql = 'SELECT * FROM branches';
+        let sql = `
+            SELECT 
+                id, 
+                name, 
+                name_ar,
+                address, 
+                phone, 
+                phone2,
+                maps_link,
+                google_maps_link,
+                location_lat as latitude,
+                location_lng as longitude,
+                coverage_radius_km,
+                delivery_radius,
+                is_active,
+                governorate,
+                city,
+                pickup_enabled
+            FROM branches
+        `;
         const params = [];
 
         if (active === 'true') {
@@ -54,10 +73,110 @@ router.get('/', async (req, res) => {
     }
 });
 
+// Get nearest branch to user location
+router.get('/location/nearest', async (req, res) => {
+    const { lat, lng } = req.query;
+
+    if (!lat || !lng) {
+        return res.status(400).json({ error: 'Latitude and longitude required' });
+    }
+
+    try {
+        // Using Haversine formula to find nearest branch
+        const sql = `
+            SELECT 
+                id, 
+                name, 
+                name_ar,
+                address, 
+                phone, 
+                phone2,
+                maps_link,
+                google_maps_link,
+                location_lat as latitude,
+                location_lng as longitude,
+                coverage_radius_km,
+                delivery_radius,
+                is_active,
+                governorate,
+                city,
+                pickup_enabled,
+                (
+                    6371 * acos(
+                        cos(radians($1)) * cos(radians(location_lat)) *
+                        cos(radians(location_lng) - radians($2)) +
+                        sin(radians($1)) * sin(radians(location_lat))
+                    )
+                ) AS distance_km
+            FROM branches
+            WHERE is_active = TRUE 
+              AND location_lat IS NOT NULL 
+              AND location_lng IS NOT NULL
+            ORDER BY distance_km ASC
+            LIMIT 1
+        `;
+
+        const { rows } = await query(sql, [parseFloat(lat), parseFloat(lng)]);
+        
+        if (rows.length === 0) {
+            // Fallback to first active branch if no coordinates available
+            const { rows: fallback } = await query(`
+                SELECT 
+                    id, name, name_ar, address, phone, phone2, maps_link, google_maps_link,
+                    location_lat as latitude, location_lng as longitude,
+                    coverage_radius_km, delivery_radius, is_active, governorate, city, pickup_enabled
+                FROM branches 
+                WHERE is_active = TRUE 
+                ORDER BY id 
+                LIMIT 1
+            `);
+            
+            if (fallback.length === 0) {
+                return res.status(404).json({ error: 'No active branches found' });
+            }
+            
+            return res.json({ 
+                message: 'success', 
+                data: fallback[0],
+                note: 'Fallback: No branch coordinates available, using default branch'
+            });
+        }
+
+        res.json({ 
+            message: 'success', 
+            data: rows[0],
+            distance_km: rows[0].distance_km
+        });
+    } catch (err) {
+        console.error("Error finding nearest branch:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Get single branch
 router.get('/:id', async (req, res) => {
     try {
-        const { rows } = await query("SELECT * FROM branches WHERE id = $1", [req.params.id]);
+        const { rows } = await query(`
+            SELECT 
+                id, 
+                name, 
+                name_ar,
+                address, 
+                phone, 
+                phone2,
+                maps_link,
+                google_maps_link,
+                location_lat as latitude,
+                location_lng as longitude,
+                coverage_radius_km,
+                delivery_radius,
+                is_active,
+                governorate,
+                city,
+                pickup_enabled
+            FROM branches 
+            WHERE id = $1
+        `, [req.params.id]);
         
         if (rows.length === 0) {
             return res.status(404).json({ error: 'Branch not found' });
@@ -83,17 +202,41 @@ router.get('/nearby', async (req, res) => {
     try {
         // Using Haversine formula for distance calculation
         const sql = `
-            SELECT *,
-            (
-                6371 * acos(
-                    cos(radians($1)) * cos(radians(location_lat)) *
-                    cos(radians(location_lng) - radians($2)) +
-                    sin(radians($1)) * sin(radians(location_lat))
-                )
-            ) AS distance_km
+            SELECT 
+                id, 
+                name, 
+                name_ar,
+                address, 
+                phone, 
+                phone2,
+                maps_link,
+                google_maps_link,
+                location_lat as latitude,
+                location_lng as longitude,
+                coverage_radius_km,
+                delivery_radius,
+                is_active,
+                governorate,
+                city,
+                pickup_enabled,
+                (
+                    6371 * acos(
+                        cos(radians($1)) * cos(radians(location_lat)) *
+                        cos(radians(location_lng) - radians($2)) +
+                        sin(radians($1)) * sin(radians(location_lat))
+                    )
+                ) AS distance_km
             FROM branches
             WHERE is_active = TRUE
-            HAVING distance_km <= $3
+              AND location_lat IS NOT NULL 
+              AND location_lng IS NOT NULL
+              AND (
+                  6371 * acos(
+                      cos(radians($1)) * cos(radians(location_lat)) *
+                      cos(radians(location_lng) - radians($2)) +
+                      sin(radians($1)) * sin(radians(location_lat))
+                  )
+              ) <= $3
             ORDER BY distance_km
         `;
 
