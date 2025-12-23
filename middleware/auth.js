@@ -9,13 +9,23 @@ const SECRET_KEY = process.env.JWT_SECRET;
 
 export const verifyToken = (req, res, next) => {
     const tokenHeader = req.headers['authorization'];
-    if (!tokenHeader) return res.status(403).send({ auth: false, message: 'No token provided.' });
+    console.log('🔑 verifyToken - Authorization header:', tokenHeader ? 'Present' : 'Missing');
+    
+    if (!tokenHeader) {
+        console.log('❌ No token provided');
+        return res.status(403).send({ auth: false, message: 'No token provided.' });
+    }
 
     const token = tokenHeader.split(' ')[1]; // Bearer <token>
+    console.log('🔑 Token extracted:', token ? `${token.substring(0, 20)}...` : 'None');
 
     jwt.verify(token, SECRET_KEY, (err, decoded) => {
-        if (err) return res.status(401).send({ auth: false, message: 'Failed to authenticate token.' });
+        if (err) {
+            console.log('❌ Token verification failed:', err.message);
+            return res.status(401).send({ auth: false, message: 'Failed to authenticate token.' });
+        }
 
+        console.log('✅ Token verified for user:', decoded.id, 'role:', decoded.role);
         // Save to request for use in other routes
         req.userId = decoded.id;
         req.userRole = decoded.role;

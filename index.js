@@ -136,6 +136,21 @@ app.options('*', cors());
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
+// Add CORS headers to all responses as backup (MOVED BEFORE ROUTES)
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && (allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin))) {
+        res.header('Access-Control-Allow-Origin', origin);
+    }
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, apikey');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
 // Initialize Socket.io
 initializeSocket(io);
 
@@ -182,15 +197,6 @@ app.use('/api/loyalty-barcode', loyaltyBarcodeRoutes);
 // Image Upload Route
 import uploadRoutes from './routes/upload.js';
 app.use('/api/upload', uploadRoutes);
-
-// Add CORS headers to all responses as backup
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, apikey');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    next();
-});
 
 // Health check endpoint (moved under /api for serverless route consistency)
 app.get('/api/health', async (req, res) => {
