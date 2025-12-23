@@ -597,7 +597,7 @@ router.get('/analytics/high-demand', [verifyToken, isAdmin], async (req, res) =>
                 p.category,
                 COUNT(DISTINCT oi.order_id) as order_count,
                 SUM(oi.quantity) as total_sold,
-                ROUND(AVG(oi.quantity)::numeric, 1) as avg_quantity_per_order,
+                ROUND(AVG(oi.quantity::numeric), 1) as avg_quantity_per_order,
                 SUM(oi.quantity * oi.price) as total_revenue,
                 bp.stock_quantity as current_stock,
                 COALESCE(bp.reserved_quantity, 0) as reserved_quantity,
@@ -606,11 +606,11 @@ router.get('/analytics/high-demand', [verifyToken, isAdmin], async (req, res) =>
                     WHEN COALESCE(bp.stock_quantity, 0) <= 10 THEN 'MEDIUM_STOCK'
                     ELSE 'GOOD_STOCK'
                 END as stock_status,
-                ROUND(
-                    COALESCE(bp.stock_quantity, 0)::numeric / 
-                    NULLIF(SUM(oi.quantity), 0) * $1, 
-                    1
-                ) as days_of_stock_remaining
+                CASE 
+                    WHEN SUM(oi.quantity) > 0 THEN 
+                        ROUND((COALESCE(bp.stock_quantity, 0)::numeric / SUM(oi.quantity)::numeric * $1::numeric), 1)
+                    ELSE NULL
+                END as days_of_stock_remaining
             FROM order_items_expanded oi
             LEFT JOIN products p ON oi.product_id = p.id::text
             LEFT JOIN branch_products bp ON p.id = bp.product_id 
