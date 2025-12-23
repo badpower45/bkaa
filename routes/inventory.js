@@ -552,46 +552,71 @@ router.get('/analytics/by-category', [verifyToken, isAdmin], async (req, res) =>
 /**
  * GET /api/inventory/analytics/high-demand
  * Get high demand products based on order history
+ * Note: This system stores items as JSONB in orders.items, not in separate order_items table
  */
 router.get('/analytics/high-demand', [verifyToken, isAdmin], async (req, res) => {
     try {
         const { days = 30, limit = 50, branch_id } = req.query;
-        const params = [days, limit];
+        const params = [parseInt(days), parseInt(limit)];
         let branchFilter = '';
+        let branchJoin = '';
 
         if (branch_id) {
             params.push(branch_id);
             branchFilter = 'AND o.branch_id = $3';
+            branchJoin = 'AND bp.branch_id = $3';
         }
 
+        // Extract items from JSONB and analyze demand
         const { rows } = await query(`
+            WITH order_items_expanded AS (
+                SELECT 
+                    o.id as order_id,
+                    o.branch_id,
+                    o.created_at,
+                    o.status,
+                    (item->>'productId')::text as product_id,
+                    (item->>'name')::text as product_name,
+                    COALESCE((item->>'quantity')::int, 1) as quantity,
+                    COALESCE((item->>'price')::numeric, 0) as price
+                FROM orders o,
+                jsonb_array_elements(
+                    CASE 
+                        WHEN jsonb_typeof(o.items) = 'array' THEN o.items
+                        ELSE '[]'::jsonb
+                    END
+                ) as item
+                WHERE o.created_at >= NOW() - INTERVAL '1 day' * $1
+                    AND o.status IN ('pending', 'confirmed', 'delivered')
+                    ${branchFilter}
+            )
             SELECT 
-                p.id,
-                p.name,
+                oi.product_id as id,
+                COALESCE(p.name, oi.product_name) as name,
                 p.barcode,
                 p.category,
-                COUNT(DISTINCT o.id) as order_count,
+                COUNT(DISTINCT oi.order_id) as order_count,
                 SUM(oi.quantity) as total_sold,
-                AVG(oi.quantity) as avg_quantity_per_order,
+                ROUND(AVG(oi.quantity)::numeric, 1) as avg_quantity_per_order,
                 SUM(oi.quantity * oi.price) as total_revenue,
                 bp.stock_quantity as current_stock,
-                bp.reserved_quantity,
+                COALESCE(bp.reserved_quantity, 0) as reserved_quantity,
                 CASE 
-                    WHEN bp.stock_quantity <= 5 THEN 'LOW_STOCK'
-                    WHEN bp.stock_quantity <= 10 THEN 'MEDIUM_STOCK'
+                    WHEN COALESCE(bp.stock_quantity, 0) <= 5 THEN 'LOW_STOCK'
+                    WHEN COALESCE(bp.stock_quantity, 0) <= 10 THEN 'MEDIUM_STOCK'
                     ELSE 'GOOD_STOCK'
                 END as stock_status,
-                ROUND(bp.stock_quantity::numeric / NULLIF(SUM(oi.quantity), 0) * $1, 1) as days_of_stock_remaining
-            FROM order_items oi
-            JOIN orders o ON oi.order_id = o.id
-            JOIN products p ON oi.product_id = p.id
+                ROUND(
+                    COALESCE(bp.stock_quantity, 0)::numeric / 
+                    NULLIF(SUM(oi.quantity), 0) * $1, 
+                    1
+                ) as days_of_stock_remaining
+            FROM order_items_expanded oi
+            LEFT JOIN products p ON oi.product_id = p.id::text
             LEFT JOIN branch_products bp ON p.id = bp.product_id 
-                ${branch_id ? 'AND bp.branch_id = $3' : ''}
-            WHERE o.created_at >= NOW() - INTERVAL '1 day' * $1
-                AND o.status IN ('pending', 'confirmed', 'delivered')
-                ${branchFilter}
-            GROUP BY p.id, p.name, p.barcode, p.category, bp.stock_quantity, bp.reserved_quantity
-            ORDER BY total_sold DESC
+                ${branch_id ? branchJoin : 'AND bp.branch_id = (SELECT MIN(branch_id) FROM branch_products WHERE product_id = p.id)'}
+            GROUP BY oi.product_id, p.name, oi.product_name, p.barcode, p.category, bp.stock_quantity, bp.reserved_quantity
+            ORDER BY total_sold DESC NULLS LAST
             LIMIT $2
         `, params);
 
