@@ -549,7 +549,28 @@ router.put('/:id/status', [verifyToken, isAdmin], async (req, res) => {
                     [order.user_id, orderId, points, `نقاط من طلب رقم ${orderId}`]
                 );
                 
-                console.log(`Awarded ${points} loyalty points to user ${order.user_id} for order ${orderId}`);
+                console.log(`✅ Awarded ${points} loyalty points to user ${order.user_id} for order ${orderId}`);
+            }
+        }
+
+        // Deduct Loyalty Points when order is returned or cancelled (if was delivered before)
+        if ((status === 'returned' || status === 'cancelled') && order.status === 'delivered') {
+            const points = Math.floor(Number(order.total) || 0);
+            if (points > 0 && order.user_id) {
+                // Deduct points from user
+                await query(
+                    "UPDATE users SET loyalty_points = GREATEST(COALESCE(loyalty_points, 0) - $1, 0) WHERE id = $2",
+                    [points, order.user_id]
+                );
+                
+                // Create loyalty points history record
+                await query(
+                    `INSERT INTO loyalty_points_history (user_id, order_id, points, type, description)
+                    VALUES ($1, $2, $3, 'deducted', $4)`,
+                    [order.user_id, orderId, -points, `خصم نقاط من طلب مرتجع/ملغي رقم ${orderId}`]
+                );
+                
+                console.log(`⚠️ Deducted ${points} loyalty points from user ${order.user_id} for returned/cancelled order ${orderId}`);
             }
         }
 
