@@ -434,7 +434,7 @@ router.get('/low-stock', [verifyToken, isAdmin], async (req, res) => {
                 END as status
             FROM products p
             LEFT JOIN inventory_batches ib ON p.id = ib.product_id
-            WHERE p.is_active = true
+            WHERE 1=1
             GROUP BY p.id
             HAVING COALESCE(SUM(ib.quantity_remaining), 0) <= p.reorder_point
             ORDER BY 
@@ -482,7 +482,7 @@ router.get('/analytics/by-branch', [verifyToken, isAdmin], async (req, res) => {
                     ELSE bp.price * bp.stock_quantity END) as inventory_value
             FROM branches b
             LEFT JOIN branch_products bp ON b.id = bp.branch_id
-            WHERE b.is_active = TRUE
+            WHERE 1=1
             GROUP BY b.id, b.name, b.city
             ORDER BY total_stock DESC
         `);
