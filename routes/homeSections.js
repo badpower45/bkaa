@@ -47,7 +47,8 @@ router.get('/', async (req, res) => {
                         FROM products p
                         LEFT JOIN branch_products bp ON p.id = bp.product_id
                         LEFT JOIN categories c ON (p.category = c.name OR p.category = c.name_ar)
-                        WHERE (
+                        WHERE (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
+                        AND (
                             p.category = $1 
                             OR TRIM(LOWER(p.category)) = TRIM(LOWER($1))
                             OR p.category LIKE $1

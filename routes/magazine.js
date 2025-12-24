@@ -63,19 +63,55 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
         const {
             name, name_en, price, old_price, unit, discount_percentage,
             image, category, bg_color, product_id, branch_id,
-            start_date, end_date, sort_order
+            start_date, end_date, sort_order, barcode, description, weight
         } = req.body;
+        
+        let finalProductId = product_id;
+        
+        // If no product_id provided, create a new product for this offer
+        if (!product_id) {
+            const productResult = await query(`
+                INSERT INTO products 
+                (name, name_en, description, image, category, weight, barcode, is_offer_only, is_new)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true, true)
+                RETURNING id
+            `, [
+                name, 
+                name_en || name, 
+                description || `عرض خاص: ${name}`,
+                image,
+                category || 'عروض',
+                unit || weight || 'قطعة',
+                barcode || `OFFER-${Date.now()}`,
+            ]);
+            
+            finalProductId = productResult.rows[0].id;
+            
+            // Add product to branch_products with the offer price
+            if (branch_id) {
+                await query(`
+                    INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, is_available)
+                    VALUES ($1, $2, $3, $4, 100, true)
+                    ON CONFLICT (branch_id, product_id) 
+                    DO UPDATE SET price = EXCLUDED.price, discount_price = EXCLUDED.discount_price
+                `, [branch_id, finalProductId, old_price || price, price]);
+            }
+            
+            console.log(`✅ Created new product for magazine offer: ${finalProductId}`);
+        }
         
         const { rows } = await query(`
             INSERT INTO magazine_offers 
             (name, name_en, price, old_price, unit, discount_percentage, image, category, bg_color, product_id, branch_id, start_date, end_date, sort_order)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING *
-        `, [name, name_en, price, old_price, unit || 'كجم', discount_percentage, image, category || 'جميع العروض', bg_color, product_id, branch_id, start_date, end_date, sort_order || 0]);
+        `, [name, name_en, price, old_price, unit || 'كجم', discount_percentage, image, category || 'جميع العروض', bg_color, finalProductId, branch_id, start_date, end_date, sort_order || 0]);
         
         res.status(201).json({
             success: true,
-            data: rows[0]
+            data: rows[0],
+            productCreated: !product_id,
+            productId: finalProductId
         });
     } catch (err) {
         console.error('Error creating magazine offer:', err);

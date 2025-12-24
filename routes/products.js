@@ -192,7 +192,7 @@ router.get('/', async (req, res) => {
             FROM products p
             JOIN branch_products bp ON p.id = bp.product_id
             LEFT JOIN brands b ON p.brand_id = b.id
-            WHERE bp.branch_id = $1 AND bp.is_available = TRUE
+            WHERE bp.branch_id = $1 AND bp.is_available = TRUE AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
         `;
         const params = [branchId];
         let paramIndex = 2;
@@ -266,6 +266,7 @@ router.get('/search', async (req, res) => {
             WHERE bp.branch_id = $1 
             AND (p.name ILIKE $2 OR p.description ILIKE $2 OR p.barcode ILIKE $2 OR p.category ILIKE $2)
             AND bp.is_available = TRUE
+            AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
             ORDER BY 
                 CASE WHEN (bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) > 0 THEN 0 ELSE 1 END,
                 p.name

@@ -74,19 +74,56 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
         const {
             name, name_en, price, old_price, discount_percentage,
             image, total_quantity, product_id, branch_id,
-            start_time, end_time, is_flash_deal, sort_order
+            start_time, end_time, is_flash_deal, sort_order,
+            barcode, description, weight, category
         } = req.body;
+        
+        let finalProductId = product_id;
+        
+        // If no product_id provided, create a new product for this hot deal
+        if (!product_id) {
+            const productResult = await query(`
+                INSERT INTO products 
+                (name, name_en, description, image, category, weight, barcode, is_offer_only, is_new)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true, true)
+                RETURNING id
+            `, [
+                name, 
+                name_en || name, 
+                description || `عرض ساخن: ${name}`,
+                image,
+                category || 'عروض ساخنة',
+                weight || 'قطعة',
+                barcode || `HOTDEAL-${Date.now()}`,
+            ]);
+            
+            finalProductId = productResult.rows[0].id;
+            
+            // Add product to branch_products with the hot deal price
+            if (branch_id) {
+                await query(`
+                    INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, is_available)
+                    VALUES ($1, $2, $3, $4, $5, true)
+                    ON CONFLICT (branch_id, product_id) 
+                    DO UPDATE SET price = EXCLUDED.price, discount_price = EXCLUDED.discount_price, stock_quantity = EXCLUDED.stock_quantity
+                `, [branch_id, finalProductId, old_price || price, price, total_quantity || 100]);
+            }
+            
+            console.log(`✅ Created new product for hot deal: ${finalProductId}`);
+        }
         
         const { rows } = await query(`
             INSERT INTO hot_deals 
             (name, name_en, price, old_price, discount_percentage, image, total_quantity, product_id, branch_id, start_time, end_time, is_flash_deal, sort_order)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             RETURNING *
-        `, [name, name_en, price, old_price, discount_percentage, image, total_quantity || 100, product_id, branch_id, start_time || new Date(), end_time, is_flash_deal || false, sort_order || 0]);
+        `, [name, name_en, price, old_price, discount_percentage, image, total_quantity || 100, finalProductId, branch_id, start_time || new Date(), end_time, is_flash_deal || false, sort_order || 0]);
         
         res.status(201).json({
             success: true,
-            data: rows[0]
+            data: rows[0],
+            productCreated: !product_id,
+            productId: finalProductId
         });
     } catch (err) {
         console.error('Error creating hot deal:', err);
