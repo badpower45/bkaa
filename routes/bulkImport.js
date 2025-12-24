@@ -350,20 +350,150 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
             
             console.log(`Successfully saved ${imported.length} products as drafts`);
             
-            res.json({
-                success: true,
-                message: `تم حفظ ${imported.length} منتج كمسودات. يمكنك الآن مراجعتها وتعديلها قبل النشر.`,
-                imported: imported.length,
-                failed: importErrors.length,
-                total: rows.length,
-                batchId: batchId,
-                redirectTo: `/admin/draft-products/${batchId}`,
-                details: {
-                    imported: imported,
-                    validationErrors: [],
-                    importErrors: importErrors
+            // Check if auto-publish is requested
+            const autoPublish = req.body.autoPublish === 'true' || req.body.autoPublish === true;
+            
+            if (autoPublish && imported.length > 0) {
+                console.log('Auto-publishing products...');
+                
+                // Publish all drafts from this batch
+                try {
+                    const draftsResult = await query(
+                        'SELECT * FROM draft_products WHERE import_batch_id = $1',
+                        [batchId]
+                    );
+                    
+                    let publishedCount = 0;
+                    const publishErrors = [];
+                    
+                    for (const draft of draftsResult.rows) {
+                        try {
+                            // Check if product exists
+                            const existingProduct = await query(
+                                'SELECT id FROM products WHERE barcode = $1',
+                                [draft.barcode]
+                            );
+                            
+                            let productId;
+                            
+                            if (existingProduct.rows.length > 0) {
+                                // Update existing
+                                productId = existingProduct.rows[0].id;
+                                await query(`
+                                    UPDATE products SET
+                                        name = $1, price = $2, old_price = $3,
+                                        discount_percentage = $4, category = $5,
+                                        subcategory = $6, image = $7, expiry_date = $8,
+                                        updated_at = NOW()
+                                    WHERE id = $9
+                                `, [
+                                    draft.name, draft.price, draft.old_price,
+                                    draft.discount_percentage, draft.category,
+                                    draft.subcategory, draft.image, draft.expiry_date,
+                                    productId
+                                ]);
+                            } else {
+                                // Insert new
+                                const newProduct = await query(`
+                                    INSERT INTO products (
+                                        name, barcode, price, old_price, 
+                                        discount_percentage, category, subcategory, 
+                                        image, expiry_date
+                                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                                    RETURNING id
+                                `, [
+                                    draft.name, draft.barcode, draft.price,
+                                    draft.old_price, draft.discount_percentage || 0,
+                                    draft.category, draft.subcategory,
+                                    draft.image, draft.expiry_date
+                                ]);
+                                productId = newProduct.rows[0].id;
+                            }
+                            
+                            // Update branch_products
+                            const existingBranchProduct = await query(
+                                'SELECT id FROM branch_products WHERE product_id = $1 AND branch_id = $2',
+                                [productId, draft.branch_id]
+                            );
+                            
+                            if (existingBranchProduct.rows.length > 0) {
+                                await query(`
+                                    UPDATE branch_products 
+                                    SET stock = stock + $1, updated_at = NOW()
+                                    WHERE product_id = $2 AND branch_id = $3
+                                `, [draft.stock_quantity, productId, draft.branch_id]);
+                            } else {
+                                await query(`
+                                    INSERT INTO branch_products (product_id, branch_id, stock)
+                                    VALUES ($1, $2, $3)
+                                `, [productId, draft.branch_id, draft.stock_quantity]);
+                            }
+                            
+                            publishedCount++;
+                        } catch (error) {
+                            console.error(`Error publishing draft ${draft.id}:`, error);
+                            publishErrors.push({
+                                name: draft.name,
+                                error: error.message
+                            });
+                        }
+                    }
+                    
+                    // Delete drafts after publishing
+                    await query(
+                        'DELETE FROM draft_products WHERE import_batch_id = $1',
+                        [batchId]
+                    );
+                    
+                    console.log(`Auto-published ${publishedCount} products`);
+                    
+                    res.json({
+                        success: true,
+                        message: `✅ تم رفع ونشر ${publishedCount} منتج بنجاح! يمكنك الآن رؤيتها في قائمة المنتجات.`,
+                        imported: imported.length,
+                        published: publishedCount,
+                        failed: importErrors.length + publishErrors.length,
+                        total: rows.length,
+                        autoPublished: true,
+                        details: {
+                            imported: imported,
+                            validationErrors: [],
+                            importErrors: [...importErrors, ...publishErrors]
+                        }
+                    });
+                } catch (publishErr) {
+                    console.error('Auto-publish error:', publishErr);
+                    // Return draft response as fallback
+                    res.json({
+                        success: true,
+                        message: `⚠️ تم حفظ ${imported.length} منتج كمسودات. اضغط على "نشر جميع المنتجات" لنقلها إلى القائمة الرئيسية.`,
+                        imported: imported.length,
+                        failed: importErrors.length,
+                        total: rows.length,
+                        batchId: batchId,
+                        details: {
+                            imported: imported,
+                            validationErrors: [],
+                            importErrors: importErrors
+                        }
+                    });
                 }
-            });
+            } else {
+                // Return draft response
+                res.json({
+                    success: true,
+                    message: `⚠️ تم حفظ ${imported.length} منتج كمسودات. اضغط على زر "نشر جميع المنتجات" الأخضر لنقلها إلى القائمة الرئيسية.`,
+                    imported: imported.length,
+                    failed: importErrors.length,
+                    total: rows.length,
+                    batchId: batchId,
+                    details: {
+                        imported: imported,
+                        validationErrors: [],
+                        importErrors: importErrors
+                    }
+                });
+            }
             
         } catch (err) {
             await query('ROLLBACK');
