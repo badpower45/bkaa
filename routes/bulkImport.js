@@ -409,23 +409,65 @@ router.get('/drafts', [verifyToken, isAdmin], async (req, res) => {
     }
 });
 
-// GET /api/products/drafts/:id - Get single draft product
-router.get('/drafts/:id', [verifyToken, isAdmin], async (req, res) => {
+// GET /api/products/drafts/:batchId - Get draft products by batch ID
+router.get('/drafts/:batchId', [verifyToken, isAdmin], async (req, res) => {
     try {
-        const { id } = req.params;
-        const { rows } = await query('SELECT * FROM draft_products WHERE id = $1', [id]);
+        const { batchId } = req.params;
         
-        if (rows.length === 0) {
-            return res.status(404).json({ error: 'Draft product not found' });
+        // Check if batchId is a number (single draft ID) or a UUID (batch ID)
+        const isNumeric = /^\d+$/.test(batchId);
+        
+        if (isNumeric) {
+            // Get single draft by ID
+            const { rows } = await query('SELECT * FROM draft_products WHERE id = $1', [batchId]);
+            
+            if (rows.length === 0) {
+                return res.status(404).json({ error: 'Draft product not found' });
+            }
+            
+            return res.json({
+                success: true,
+                draft: rows[0]
+            });
+        } else {
+            // Get all drafts by batch ID
+            const { rows } = await query(`
+                SELECT 
+                    dp.*,
+                    b.name as branch_name
+                FROM draft_products dp
+                LEFT JOIN branches b ON dp.branch_id = b.id
+                WHERE dp.import_batch_id = $1
+                ORDER BY dp.created_at DESC
+            `, [batchId]);
+            
+            if (rows.length === 0) {
+                return res.status(404).json({ 
+                    success: false,
+                    error: 'No draft products found for this batch',
+                    data: []
+                });
+            }
+            
+            return res.json({
+                success: true,
+                data: rows.map(row => ({
+                    id: row.id,
+                    name: row.name,
+                    barcode: row.barcode,
+                    price_before: row.old_price,
+                    price_after: row.price,
+                    category: row.category,
+                    subcategory: row.subcategory,
+                    branch_name: row.branch_name || 'غير محدد',
+                    quantity: row.stock_quantity,
+                    image_url: row.image
+                }))
+            });
         }
-        
-        res.json({
-            success: true,
-            draft: rows[0]
-        });
     } catch (err) {
-        console.error('Error fetching draft:', err);
-        res.status(500).json({ error: 'Failed to fetch draft product' });
+        console.error('Error fetching drafts:', err);
+        res.status(500).json({ error: 'Failed to fetch draft products' });
     }
 });
 
@@ -609,33 +651,34 @@ router.post('/setup-draft-table', [verifyToken, isAdmin], async (req, res) => {
 });
 
 // POST /api/products/drafts/:batchId/publish-all - Publish all draft products from a batch
-router.post('/drafts/:batchId/publish-all', async (req, res) => {
-    const client = await pool.connect();
-    
+router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, res) => {
     try {
         const { batchId } = req.params;
         
-        await client.query('BEGIN');
+        await query('BEGIN');
         
         // Get all draft products for this batch
-        const draftsResult = await client.query(
-            'SELECT * FROM draft_products WHERE batch_id = $1',
+        const draftsResult = await query(
+            'SELECT * FROM draft_products WHERE import_batch_id = $1',
             [batchId]
         );
         
         if (draftsResult.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'No draft products found for this batch' });
+            await query('ROLLBACK');
+            return res.status(404).json({ 
+                success: false,
+                error: 'No draft products found for this batch' 
+            });
         }
         
         let successCount = 0;
-        let errors = [];
+        let publishErrors = [];
         
         // Process each draft product
         for (const draft of draftsResult.rows) {
             try {
                 // Check if product with same barcode already exists
-                const existingProduct = await client.query(
+                const existingProduct = await query(
                     'SELECT id FROM products WHERE barcode = $1',
                     [draft.barcode]
                 );
@@ -645,52 +688,46 @@ router.post('/drafts/:batchId/publish-all', async (req, res) => {
                 if (existingProduct.rows.length > 0) {
                     // Update existing product
                     productId = existingProduct.rows[0].id;
-                    await client.query(`
+                    await query(`
                         UPDATE products SET
                             name = $1,
-                            name_en = $2,
-                            price = $3,
-                            old_price = $4,
-                            discount_percentage = $5,
-                            category = $6,
-                            subcategory = $7,
-                            weight = $8,
-                            image = $9,
-                            expiry_date = $10,
+                            price = $2,
+                            old_price = $3,
+                            discount_percentage = $4,
+                            category = $5,
+                            subcategory = $6,
+                            image = $7,
+                            expiry_date = $8,
                             updated_at = NOW()
-                        WHERE id = $11
+                        WHERE id = $9
                     `, [
                         draft.name,
-                        draft.name_en,
                         draft.price,
                         draft.old_price,
                         draft.discount_percentage,
                         draft.category,
                         draft.subcategory,
-                        draft.weight,
                         draft.image,
                         draft.expiry_date,
                         productId
                     ]);
                 } else {
                     // Insert new product
-                    const newProduct = await client.query(`
+                    const newProduct = await query(`
                         INSERT INTO products (
-                            name, name_en, barcode, price, old_price, 
-                            discount_percentage, category, subcategory, weight, 
+                            name, barcode, price, old_price, 
+                            discount_percentage, category, subcategory, 
                             image, expiry_date
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                         RETURNING id
                     `, [
                         draft.name,
-                        draft.name_en,
                         draft.barcode,
                         draft.price,
                         draft.old_price,
-                        draft.discount_percentage,
+                        draft.discount_percentage || 0,
                         draft.category,
                         draft.subcategory,
-                        draft.weight,
                         draft.image,
                         draft.expiry_date
                     ]);
@@ -698,28 +735,28 @@ router.post('/drafts/:batchId/publish-all', async (req, res) => {
                 }
                 
                 // Update or insert branch_products
-                const existingBranchProduct = await client.query(
+                const existingBranchProduct = await query(
                     'SELECT id FROM branch_products WHERE product_id = $1 AND branch_id = $2',
                     [productId, draft.branch_id]
                 );
                 
                 if (existingBranchProduct.rows.length > 0) {
-                    await client.query(`
+                    await query(`
                         UPDATE branch_products 
                         SET stock = stock + $1, updated_at = NOW()
                         WHERE product_id = $2 AND branch_id = $3
-                    `, [draft.stock, productId, draft.branch_id]);
+                    `, [draft.stock_quantity, productId, draft.branch_id]);
                 } else {
-                    await client.query(`
+                    await query(`
                         INSERT INTO branch_products (product_id, branch_id, stock)
                         VALUES ($1, $2, $3)
-                    `, [productId, draft.branch_id, draft.stock]);
+                    `, [productId, draft.branch_id, draft.stock_quantity]);
                 }
                 
                 successCount++;
             } catch (error) {
                 console.error(`Error publishing draft ${draft.id}:`, error);
-                errors.push({
+                publishErrors.push({
                     name: draft.name,
                     barcode: draft.barcode,
                     error: error.message
@@ -728,30 +765,29 @@ router.post('/drafts/:batchId/publish-all', async (req, res) => {
         }
         
         // Delete all draft products from this batch
-        await client.query(
-            'DELETE FROM draft_products WHERE batch_id = $1',
+        await query(
+            'DELETE FROM draft_products WHERE import_batch_id = $1',
             [batchId]
         );
         
-        await client.query('COMMIT');
+        await query('COMMIT');
         
         res.json({
             success: true,
             publishedCount: successCount,
             totalDrafts: draftsResult.rows.length,
-            errors: errors.length > 0 ? errors : undefined,
+            errors: publishErrors.length > 0 ? publishErrors : undefined,
             message: `تم نشر ${successCount} من ${draftsResult.rows.length} منتج بنجاح`
         });
         
     } catch (err) {
-        await client.query('ROLLBACK');
+        await query('ROLLBACK');
         console.error('Error publishing draft products:', err);
         res.status(500).json({ 
+            success: false,
             error: 'Failed to publish products',
             message: err.message 
         });
-    } finally {
-        client.release();
     }
 });
 
