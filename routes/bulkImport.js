@@ -381,52 +381,61 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                                 productId = existingProduct.rows[0].id;
                                 await query(`
                                     UPDATE products SET
-                                        name = $1, price = $2, old_price = $3,
-                                        discount_percentage = $4, category = $5,
-                                        subcategory = $6, image = $7, expiry_date = $8,
-                                        updated_at = NOW()
-                                    WHERE id = $9
+                                        name = $1, category = $2,
+                                        subcategory = $3, image = $4
+                                    WHERE id = $5
                                 `, [
-                                    draft.name, draft.price, draft.old_price,
-                                    draft.discount_percentage, draft.category,
-                                    draft.subcategory, draft.image, draft.expiry_date,
+                                    draft.name, draft.category,
+                                    draft.subcategory, draft.image,
                                     productId
                                 ]);
                             } else {
-                                // Insert new
+                                // Insert new - generate ID from barcode or sequence
                                 const newProduct = await query(`
                                     INSERT INTO products (
-                                        name, barcode, price, old_price, 
-                                        discount_percentage, category, subcategory, 
-                                        image, expiry_date
-                                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                                        id, name, barcode, category, subcategory, image
+                                    ) VALUES (
+                                        COALESCE($1, (SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) + 1 FROM products WHERE id ~ '^[0-9]+$')::TEXT),
+                                        $2, $3, $4, $5, $6
+                                    )
                                     RETURNING id
                                 `, [
-                                    draft.name, draft.barcode, draft.price,
-                                    draft.old_price, draft.discount_percentage || 0,
-                                    draft.category, draft.subcategory,
-                                    draft.image, draft.expiry_date
+                                    draft.barcode, draft.name, draft.barcode,
+                                    draft.category, draft.subcategory, draft.image
                                 ]);
                                 productId = newProduct.rows[0].id;
                             }
                             
                             // Update branch_products
                             const existingBranchProduct = await query(
-                                'SELECT id FROM branch_products WHERE product_id = $1 AND branch_id = $2',
+                                'SELECT branch_id FROM branch_products WHERE product_id = $1 AND branch_id = $2',
                                 [productId, draft.branch_id]
                             );
                             
                             if (existingBranchProduct.rows.length > 0) {
                                 await query(`
                                     UPDATE branch_products 
-                                    SET stock = stock + $1, updated_at = NOW()
-                                    WHERE product_id = $2 AND branch_id = $3
-                                `, [draft.stock_quantity, productId, draft.branch_id]);
+                                    SET 
+                                        price = $1,
+                                        discount_price = $2,
+                                        stock_quantity = stock_quantity + $3,
+                                        expiry_date = $4
+                                    WHERE product_id = $5 AND branch_id = $6
+                                `, [
+                                    draft.price, draft.old_price, draft.stock_quantity,
+                                    draft.expiry_date, productId, draft.branch_id
+                                ]);
                             } else {
                                 await query(`
-                                    INSERT INTO branch_products (product_id, branch_id, stock)
-                                    VALUES ($1, $2, $3)
-                                `, [productId, draft.branch_id, draft.stock_quantity]);
+                                    INSERT INTO branch_products (
+                                        product_id, branch_id, price, discount_price,
+                                        stock_quantity, expiry_date
+                                    )
+                                    VALUES ($1, $2, $3, $4, $5, $6)
+                                `, [
+                                    productId, draft.branch_id, draft.price, draft.old_price,
+                                    draft.stock_quantity, draft.expiry_date
+                                ]);
                             }
                             
                             publishedCount++;
@@ -821,66 +830,76 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
                     await query(`
                         UPDATE products SET
                             name = $1,
-                            price = $2,
-                            old_price = $3,
-                            discount_percentage = $4,
-                            category = $5,
-                            subcategory = $6,
-                            image = $7,
-                            expiry_date = $8,
-                            updated_at = NOW()
-                        WHERE id = $9
+                            category = $2,
+                            subcategory = $3,
+                            image = $4
+                        WHERE id = $5
                     `, [
                         draft.name,
-                        draft.price,
-                        draft.old_price,
-                        draft.discount_percentage,
                         draft.category,
                         draft.subcategory,
                         draft.image,
-                        draft.expiry_date,
                         productId
                     ]);
                 } else {
-                    // Insert new product
+                    // Insert new product - generate ID from barcode or sequence
                     const newProduct = await query(`
                         INSERT INTO products (
-                            name, barcode, price, old_price, 
-                            discount_percentage, category, subcategory, 
-                            image, expiry_date
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                            id, name, barcode, category, subcategory, image
+                        ) VALUES (
+                            COALESCE($1, (SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) + 1 FROM products WHERE id ~ '^[0-9]+$')::TEXT),
+                            $2, $3, $4, $5, $6
+                        )
                         RETURNING id
                     `, [
+                        draft.barcode,
                         draft.name,
                         draft.barcode,
-                        draft.price,
-                        draft.old_price,
-                        draft.discount_percentage || 0,
                         draft.category,
                         draft.subcategory,
-                        draft.image,
-                        draft.expiry_date
+                        draft.image
                     ]);
                     productId = newProduct.rows[0].id;
                 }
                 
                 // Update or insert branch_products
                 const existingBranchProduct = await query(
-                    'SELECT id FROM branch_products WHERE product_id = $1 AND branch_id = $2',
+                    'SELECT branch_id FROM branch_products WHERE product_id = $1 AND branch_id = $2',
                     [productId, draft.branch_id]
                 );
                 
                 if (existingBranchProduct.rows.length > 0) {
                     await query(`
                         UPDATE branch_products 
-                        SET stock = stock + $1, updated_at = NOW()
-                        WHERE product_id = $2 AND branch_id = $3
-                    `, [draft.stock_quantity, productId, draft.branch_id]);
+                        SET 
+                            price = $1,
+                            discount_price = $2,
+                            stock_quantity = stock_quantity + $3,
+                            expiry_date = $4
+                        WHERE product_id = $5 AND branch_id = $6
+                    `, [
+                        draft.price,
+                        draft.old_price,
+                        draft.stock_quantity,
+                        draft.expiry_date,
+                        productId,
+                        draft.branch_id
+                    ]);
                 } else {
                     await query(`
-                        INSERT INTO branch_products (product_id, branch_id, stock)
-                        VALUES ($1, $2, $3)
-                    `, [productId, draft.branch_id, draft.stock_quantity]);
+                        INSERT INTO branch_products (
+                            product_id, branch_id, price, discount_price,
+                            stock_quantity, expiry_date
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                    `, [
+                        productId,
+                        draft.branch_id,
+                        draft.price,
+                        draft.old_price,
+                        draft.stock_quantity,
+                        draft.expiry_date
+                    ]);
                 }
                 
                 successCount++;
