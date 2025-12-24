@@ -608,6 +608,153 @@ router.post('/setup-draft-table', [verifyToken, isAdmin], async (req, res) => {
     }
 });
 
+// POST /api/products/drafts/:batchId/publish-all - Publish all draft products from a batch
+router.post('/drafts/:batchId/publish-all', async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+        const { batchId } = req.params;
+        
+        await client.query('BEGIN');
+        
+        // Get all draft products for this batch
+        const draftsResult = await client.query(
+            'SELECT * FROM draft_products WHERE batch_id = $1',
+            [batchId]
+        );
+        
+        if (draftsResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'No draft products found for this batch' });
+        }
+        
+        let successCount = 0;
+        let errors = [];
+        
+        // Process each draft product
+        for (const draft of draftsResult.rows) {
+            try {
+                // Check if product with same barcode already exists
+                const existingProduct = await client.query(
+                    'SELECT id FROM products WHERE barcode = $1',
+                    [draft.barcode]
+                );
+                
+                let productId;
+                
+                if (existingProduct.rows.length > 0) {
+                    // Update existing product
+                    productId = existingProduct.rows[0].id;
+                    await client.query(`
+                        UPDATE products SET
+                            name = $1,
+                            name_en = $2,
+                            price = $3,
+                            old_price = $4,
+                            discount_percentage = $5,
+                            category = $6,
+                            subcategory = $7,
+                            weight = $8,
+                            image = $9,
+                            expiry_date = $10,
+                            updated_at = NOW()
+                        WHERE id = $11
+                    `, [
+                        draft.name,
+                        draft.name_en,
+                        draft.price,
+                        draft.old_price,
+                        draft.discount_percentage,
+                        draft.category,
+                        draft.subcategory,
+                        draft.weight,
+                        draft.image,
+                        draft.expiry_date,
+                        productId
+                    ]);
+                } else {
+                    // Insert new product
+                    const newProduct = await client.query(`
+                        INSERT INTO products (
+                            name, name_en, barcode, price, old_price, 
+                            discount_percentage, category, subcategory, weight, 
+                            image, expiry_date
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        RETURNING id
+                    `, [
+                        draft.name,
+                        draft.name_en,
+                        draft.barcode,
+                        draft.price,
+                        draft.old_price,
+                        draft.discount_percentage,
+                        draft.category,
+                        draft.subcategory,
+                        draft.weight,
+                        draft.image,
+                        draft.expiry_date
+                    ]);
+                    productId = newProduct.rows[0].id;
+                }
+                
+                // Update or insert branch_products
+                const existingBranchProduct = await client.query(
+                    'SELECT id FROM branch_products WHERE product_id = $1 AND branch_id = $2',
+                    [productId, draft.branch_id]
+                );
+                
+                if (existingBranchProduct.rows.length > 0) {
+                    await client.query(`
+                        UPDATE branch_products 
+                        SET stock = stock + $1, updated_at = NOW()
+                        WHERE product_id = $2 AND branch_id = $3
+                    `, [draft.stock, productId, draft.branch_id]);
+                } else {
+                    await client.query(`
+                        INSERT INTO branch_products (product_id, branch_id, stock)
+                        VALUES ($1, $2, $3)
+                    `, [productId, draft.branch_id, draft.stock]);
+                }
+                
+                successCount++;
+            } catch (error) {
+                console.error(`Error publishing draft ${draft.id}:`, error);
+                errors.push({
+                    name: draft.name,
+                    barcode: draft.barcode,
+                    error: error.message
+                });
+            }
+        }
+        
+        // Delete all draft products from this batch
+        await client.query(
+            'DELETE FROM draft_products WHERE batch_id = $1',
+            [batchId]
+        );
+        
+        await client.query('COMMIT');
+        
+        res.json({
+            success: true,
+            publishedCount: successCount,
+            totalDrafts: draftsResult.rows.length,
+            errors: errors.length > 0 ? errors : undefined,
+            message: `تم نشر ${successCount} من ${draftsResult.rows.length} منتج بنجاح`
+        });
+        
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error publishing draft products:', err);
+        res.status(500).json({ 
+            error: 'Failed to publish products',
+            message: err.message 
+        });
+    } finally {
+        client.release();
+    }
+});
+
 // GET /api/products/bulk-import/template - Download Excel template
 router.get('/bulk-import/template', (req, res) => {
     try {

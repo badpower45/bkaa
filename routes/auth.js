@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { query } from '../database.js';
-import { validate, registerSchema, loginSchema } from '../middleware/validation.js';
+import { validate, registerSchema, loginSchema, validatePassword } from '../middleware/validation.js';
 
 const router = express.Router();
 
@@ -13,35 +13,68 @@ if (!process.env.JWT_SECRET) {
 }
 const SECRET_KEY = process.env.JWT_SECRET;
 
-// Register - with validation
-router.post('/register', validate(registerSchema), async (req, res) => {
-    const { name, email, password } = req.body;
+// Register - with enhanced validation for complete profile
+router.post('/register', async (req, res) => {
+    const { firstName, lastName, email, password, phone, birthDate } = req.body;
+    
+    // Validate required fields
+    if (!firstName || !lastName || !email || !password || !phone) {
+        return res.status(400).json({ 
+            error: 'الاسم الأول والأخير والإيميل وكلمة المرور ورقم الهاتف مطلوبة' 
+        });
+    }
+    
+    // ✅ Security: Validate password strength
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+        return res.status(400).json({ error: passwordError });
+    }
     
     // ✅ Security: Use stronger hashing (12 rounds)
     const hashedPassword = bcrypt.hashSync(password, 12);
 
     try {
         const sql = `
-            INSERT INTO users (name, email, password, role) 
-            VALUES ($1, $2, $3, 'customer') 
-            RETURNING id
+            INSERT INTO users (
+                first_name, last_name, name, email, password, phone, birth_date, 
+                role, profile_completed, created_at
+            ) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'customer', true, NOW()) 
+            RETURNING id, first_name, last_name, email, phone, birth_date
         `;
-        const { rows } = await query(sql, [name, email, hashedPassword]);
-        const userId = rows[0].id;
+        const fullName = `${firstName} ${lastName}`;
+        const { rows } = await query(sql, [
+            firstName, 
+            lastName, 
+            fullName,
+            email, 
+            hashedPassword, 
+            phone,
+            birthDate || null
+        ]);
+        const user = rows[0];
 
-        const token = jwt.sign({ id: userId, role: 'customer' }, SECRET_KEY, { expiresIn: 86400 });
+        const token = jwt.sign({ id: user.id, role: 'customer' }, SECRET_KEY, { expiresIn: 86400 });
 
         res.status(200).send({
             auth: true,
             token: token,
-            user: { id: userId, name, email, role: 'customer' }
+            user: { 
+                id: user.id, 
+                firstName: user.first_name,
+                lastName: user.last_name,
+                email: user.email, 
+                phone: user.phone,
+                birthDate: user.birth_date,
+                role: 'customer' 
+            }
         });
     } catch (err) {
         console.error("Register error:", err);
         if (err.code === '23505') { // Unique violation for email
-            return res.status(409).send({ error: 'Email already exists.' });
+            return res.status(409).send({ error: 'الإيميل مسجل بالفعل' });
         }
-        return res.status(500).send({ error: 'Server error during registration.' });
+        return res.status(500).send({ error: 'خطأ في السيرفر' });
     }
 });
 
@@ -260,9 +293,9 @@ router.post('/reset-password', async (req, res) => {
 // Social OAuth Login (Google/Facebook)
 // ============================================
 
-// Google OAuth Login/Register
+// Google OAuth Login/Register - Enhanced with profile completion
 router.post('/google', async (req, res) => {
-    const { googleId, email, name, picture } = req.body;
+    const { googleId, email, name, picture, phone, birthDate, givenName, familyName } = req.body;
     
     if (!googleId || !email) {
         return res.status(400).json({ error: 'Google ID and email are required' });
@@ -276,38 +309,94 @@ router.post('/google', async (req, res) => {
         );
 
         let user;
+        let needsCompletion = false;
 
         if (rows.length === 0) {
-            // Create new user
+            // Create new user - check if we have all required data
+            const firstName = givenName || name?.split(' ')[0] || 'User';
+            const lastName = familyName || name?.split(' ').slice(1).join(' ') || '';
+            
+            needsCompletion = !phone || !birthDate;
+            
             const { rows: newUserRows } = await query(`
-                INSERT INTO users (name, email, google_id, avatar, role, password)
-                VALUES ($1, $2, $3, $4, 'customer', '')
-                RETURNING id, name, email, role
-            `, [name, email, googleId, picture]);
+                INSERT INTO users (
+                    first_name, last_name, name, email, google_id, avatar, 
+                    phone, birth_date, role, password, profile_completed, created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'customer', '', $9, NOW())
+                RETURNING id, first_name, last_name, email, phone, birth_date, avatar, profile_completed
+            `, [
+                firstName, 
+                lastName, 
+                name || `${firstName} ${lastName}`,
+                email, 
+                googleId, 
+                picture,
+                phone || null,
+                birthDate || null,
+                !needsCompletion
+            ]);
             user = newUserRows[0];
             console.log(`✅ New Google user registered: ${email}`);
         } else {
             user = rows[0];
-            // Update google_id and avatar if not set
-            if (!user.google_id || !user.avatar) {
-                await query(`
-                    UPDATE users SET google_id = $1, avatar = COALESCE(avatar, $2) WHERE id = $3
-                `, [googleId, picture, user.id]);
+            // Update google_id, avatar, and missing fields if not set
+            const updates = [];
+            const values = [];
+            let paramCount = 1;
+            
+            if (!user.google_id) {
+                updates.push(`google_id = $${paramCount++}`);
+                values.push(googleId);
             }
+            if (!user.avatar && picture) {
+                updates.push(`avatar = $${paramCount++}`);
+                values.push(picture);
+            }
+            if (!user.phone && phone) {
+                updates.push(`phone = $${paramCount++}`);
+                values.push(phone);
+            }
+            if (!user.birth_date && birthDate) {
+                updates.push(`birth_date = $${paramCount++}`);
+                values.push(birthDate);
+            }
+            
+            if (updates.length > 0) {
+                values.push(user.id);
+                await query(
+                    `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount}`,
+                    values
+                );
+            }
+            
+            // Refresh user data
+            const { rows: updatedRows } = await query(
+                'SELECT id, first_name, last_name, email, phone, birth_date, avatar, profile_completed FROM users WHERE id = $1',
+                [user.id]
+            );
+            user = updatedRows[0];
+            
+            needsCompletion = !user.phone || !user.birth_date;
             console.log(`✅ Google user logged in: ${email}`);
         }
 
-        const token = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, { expiresIn: 86400 });
+        const token = jwt.sign({ id: user.id, role: 'customer' }, SECRET_KEY, { expiresIn: 86400 });
 
         res.status(200).json({
             auth: true,
             token,
+            needsCompletion,
             user: {
                 id: user.id,
-                name: user.name,
+                firstName: user.first_name,
+                lastName: user.last_name,
                 email: user.email,
-                role: user.role,
-                avatar: picture || user.avatar
+                phone: user.phone,
+                birthDate: user.birth_date,
+                role: 'customer',
+                avatar: user.avatar,
+                profileCompleted: user.profile_completed
             }
         });
     } catch (err) {
@@ -316,9 +405,9 @@ router.post('/google', async (req, res) => {
     }
 });
 
-// Facebook OAuth Login/Register
+// Facebook OAuth Login/Register - Enhanced with profile completion
 router.post('/facebook', async (req, res) => {
-    const { facebookId, email, name, picture } = req.body;
+    const { facebookId, email, name, picture, phone, birthDate, firstName, lastName } = req.body;
     
     if (!facebookId) {
         return res.status(400).json({ error: 'Facebook ID is required' });
@@ -332,43 +421,188 @@ router.post('/facebook', async (req, res) => {
         );
 
         let user;
+        let needsCompletion = false;
 
         if (rows.length === 0) {
-            // Create new user
+            // Create new user - check if we have all required data
+            const first = firstName || name?.split(' ')[0] || 'User';
+            const last = lastName || name?.split(' ').slice(1).join(' ') || '';
+            
+            needsCompletion = !phone || !birthDate || !email;
+            
             const { rows: newUserRows } = await query(`
-                INSERT INTO users (name, email, facebook_id, avatar, role, password)
-                VALUES ($1, $2, $3, $4, 'customer', '')
-                RETURNING id, name, email, role
-            `, [name, email || null, facebookId, picture]);
+                INSERT INTO users (
+                    first_name, last_name, name, email, facebook_id, avatar, 
+                    phone, birth_date, role, password, profile_completed, created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'customer', '', $9, NOW())
+                RETURNING id, first_name, last_name, email, phone, birth_date, avatar, profile_completed
+            `, [
+                first,
+                last,
+                name || `${first} ${last}`,
+                email || null,
+                facebookId,
+                picture,
+                phone || null,
+                birthDate || null,
+                !needsCompletion
+            ]);
             user = newUserRows[0];
             console.log(`✅ New Facebook user registered: ${name}`);
         } else {
             user = rows[0];
-            // Update facebook_id and avatar if not set
-            if (!user.facebook_id || !user.avatar) {
-                await query(`
-                    UPDATE users SET facebook_id = $1, avatar = COALESCE(avatar, $2) WHERE id = $3
-                `, [facebookId, picture, user.id]);
+            // Update facebook_id, avatar, and missing fields if not set
+            const updates = [];
+            const values = [];
+            let paramCount = 1;
+            
+            if (!user.facebook_id) {
+                updates.push(`facebook_id = $${paramCount++}`);
+                values.push(facebookId);
             }
+            if (!user.avatar && picture) {
+                updates.push(`avatar = $${paramCount++}`);
+                values.push(picture);
+            }
+            if (!user.email && email) {
+                updates.push(`email = $${paramCount++}`);
+                values.push(email);
+            }
+            if (!user.phone && phone) {
+                updates.push(`phone = $${paramCount++}`);
+                values.push(phone);
+            }
+            if (!user.birth_date && birthDate) {
+                updates.push(`birth_date = $${paramCount++}`);
+                values.push(birthDate);
+            }
+            
+            if (updates.length > 0) {
+                values.push(user.id);
+                await query(
+                    `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount}`,
+                    values
+                );
+            }
+            
+            // Refresh user data
+            const { rows: updatedRows } = await query(
+                'SELECT id, first_name, last_name, email, phone, birth_date, avatar, profile_completed FROM users WHERE id = $1',
+                [user.id]
+            );
+            user = updatedRows[0];
+            
+            needsCompletion = !user.phone || !user.birth_date || !user.email;
             console.log(`✅ Facebook user logged in: ${name}`);
         }
 
-        const token = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, { expiresIn: 86400 });
+        const token = jwt.sign({ id: user.id, role: 'customer' }, SECRET_KEY, { expiresIn: 86400 });
 
         res.status(200).json({
             auth: true,
             token,
+            needsCompletion,
             user: {
                 id: user.id,
-                name: user.name,
+                firstName: user.first_name,
+                lastName: user.last_name,
                 email: user.email,
-                role: user.role,
-                avatar: picture || user.avatar
+                phone: user.phone,
+                birthDate: user.birth_date,
+                role: 'customer',
+                avatar: user.avatar,
+                profileCompleted: user.profile_completed
             }
         });
     } catch (err) {
         console.error('Facebook auth error:', err);
         res.status(500).json({ error: 'Server error during Facebook authentication' });
+    }
+});
+
+// Complete Profile - for OAuth users who need to add missing data
+router.post('/complete-profile', async (req, res) => {
+    const token = req.headers['authorization']?.split(' ')[1];
+    
+    if (!token) {
+        return res.status(401).json({ error: 'No token provided' });
+    }
+
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+        const { phone, birthDate, firstName, lastName, email } = req.body;
+        
+        // Validate at least phone is provided (required)
+        if (!phone) {
+            return res.status(400).json({ error: 'رقم الهاتف مطلوب' });
+        }
+        
+        // Build dynamic update query
+        const updates = [];
+        const values = [];
+        let paramCount = 1;
+        
+        if (phone) {
+            updates.push(`phone = $${paramCount++}`);
+            values.push(phone);
+        }
+        if (birthDate) {
+            updates.push(`birth_date = $${paramCount++}`);
+            values.push(birthDate);
+        }
+        if (firstName) {
+            updates.push(`first_name = $${paramCount++}`);
+            values.push(firstName);
+        }
+        if (lastName) {
+            updates.push(`last_name = $${paramCount++}`);
+            values.push(lastName);
+        }
+        if (email) {
+            updates.push(`email = $${paramCount++}`);
+            values.push(email);
+        }
+        
+        // Mark profile as completed
+        updates.push(`profile_completed = true`);
+        
+        values.push(decoded.id);
+        
+        await query(
+            `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount}`,
+            values
+        );
+        
+        // Get updated user data
+        const { rows } = await query(
+            'SELECT id, first_name, last_name, email, phone, birth_date, avatar, profile_completed, role FROM users WHERE id = $1',
+            [decoded.id]
+        );
+        
+        const user = rows[0];
+        
+        res.status(200).json({
+            success: true,
+            message: 'تم استكمال البيانات بنجاح',
+            user: {
+                id: user.id,
+                firstName: user.first_name,
+                lastName: user.last_name,
+                email: user.email,
+                phone: user.phone,
+                birthDate: user.birth_date,
+                avatar: user.avatar,
+                role: user.role,
+                profileCompleted: user.profile_completed
+            }
+        });
+    } catch (err) {
+        console.error('Complete profile error:', err);
+        if (err.name === 'JsonWebTokenError') {
+            return res.status(401).json({ error: 'Invalid token' });
+        }
+        res.status(500).json({ error: 'Server error' });
     }
 });
 

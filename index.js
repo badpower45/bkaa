@@ -9,6 +9,14 @@ import helmet from 'helmet';
 import './database.js'; // Database connection initializes on import
 import { initializeSocket } from './socket.js';
 import { startScheduler } from './scheduler.js';
+import { 
+    ordersLimiter, 
+    cartLimiter, 
+    searchLimiter, 
+    returnsLimiter, 
+    chatLimiter, 
+    reviewLimiter 
+} from './middleware/rateLimiters.js';
 import authRoutes from './routes/auth.js';
 import productRoutes from './routes/products.js';
 import cartRoutes from './routes/cart.js';
@@ -157,10 +165,10 @@ initializeSocket(io);
 // Routes
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/products', productRoutes);
-app.use('/api/cart', cartRoutes);
-app.use('/api/orders', orderRoutes);
+app.use('/api/cart', cartLimiter, cartRoutes);
+app.use('/api/orders', ordersLimiter, orderRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/chat', chatRoutes);
+app.use('/api/chat', chatLimiter, chatRoutes);
 app.use('/api/branch-products', branchProductsRoutes);
 app.use('/api/delivery-slots', deliverySlotsRoutes);
 app.use('/api/branches', branchesRoutes);
@@ -181,8 +189,8 @@ app.use('/api/addresses', addressesRoutes);
 app.use('/api/loyalty', loyaltyRoutes);
 app.use('/api/loyalty-enhanced', loyaltyEnhancedRoutes);
 app.use('/api/brands', brandsRoutes);
-app.use('/api/returns', returnsRoutes);
-app.use('/api/returns-enhanced', returnsEnhancedRoutes);
+app.use('/api/returns', returnsLimiter, returnsRoutes);
+app.use('/api/returns-enhanced', returnsLimiter, returnsEnhancedRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/admin', adminAnalyticsRoutes);
 app.use('/api/admin-enhanced', adminEnhancedRoutes);
@@ -190,7 +198,7 @@ app.use('/api/inventory', inventoryRoutes);
 app.use('/api/excel', excelRoutes);
 app.use('/api/location', locationRoutes);
 app.use('/api/order-cancellation', orderCancellationRoutes);
-app.use('/api/reviews', reviewsRoutes);
+app.use('/api/reviews', reviewLimiter, reviewsRoutes);
 app.use('/api/customer-block', customerBlockRoutes);
 app.use('/api/loyalty-barcode', loyaltyBarcodeRoutes);
 

@@ -1,6 +1,77 @@
 import Joi from 'joi';
 
 /**
+ * Password Strength Validator
+ * Checks for strong password requirements
+ */
+export const validatePassword = (password) => {
+    if (!password || password.length < 8) {
+        return 'كلمة المرور يجب أن تكون 8 أحرف على الأقل';
+    }
+    
+    if (password.length > 100) {
+        return 'كلمة المرور طويلة جداً';
+    }
+    
+    // Check for uppercase
+    if (!/[A-Z]/.test(password)) {
+        return 'كلمة المرور يجب أن تحتوي على حرف كبير واحد على الأقل';
+    }
+    
+    // Check for lowercase
+    if (!/[a-z]/.test(password)) {
+        return 'كلمة المرور يجب أن تحتوي على حرف صغير واحد على الأقل';
+    }
+    
+    // Check for number
+    if (!/[0-9]/.test(password)) {
+        return 'كلمة المرور يجب أن تحتوي على رقم واحد على الأقل';
+    }
+    
+    // Check for special character
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+        return 'كلمة المرور يجب أن تحتوي على رمز خاص واحد على الأقل (!@#$%^&*...)';
+    }
+    
+    // Common passwords check
+    const commonPasswords = [
+        '12345678', 'password', 'Password1!', 'Admin123!', 
+        'Qwerty123!', 'Welcome123!'
+    ];
+    if (commonPasswords.includes(password)) {
+        return 'كلمة المرور ضعيفة جداً، استخدم كلمة مرور أقوى';
+    }
+    
+    return null; // Valid password
+};
+
+/**
+ * Sanitize String Input
+ * Removes dangerous characters to prevent XSS
+ */
+export const sanitizeString = (str) => {
+    if (typeof str !== 'string') return str;
+    
+    return str
+        .trim()
+        .replace(/[<>]/g, '') // Remove < and >
+        .replace(/javascript:/gi, '') // Remove javascript: protocol
+        .replace(/on\w+\s*=/gi, ''); // Remove event handlers like onclick=
+};
+
+/**
+ * Sanitize Search Query
+ * Prevents SQL injection in LIKE queries
+ */
+export const sanitizeSearchQuery = (query) => {
+    if (typeof query !== 'string') return query;
+    
+    return query
+        .trim()
+        .replace(/[%;\\]/g, ''); // Remove SQL LIKE wildcards and escape chars
+};
+
+/**
  * Validation Middleware Factory
  * Creates middleware that validates request body/params/query against Joi schema
  */

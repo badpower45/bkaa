@@ -19,17 +19,62 @@ const upload = multer({
     storage: storage,
     limits: {
         fileSize: 5 * 1024 * 1024, // 5MB max file size
+        files: 10 // Maximum 10 files per request
     },
     fileFilter: (req, file, cb) => {
-        // Allow only images
+        // ✅ Security: Strict file type checking
         const allowedMimes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp', 'image/gif'];
-        if (allowedMimes.includes(file.mimetype)) {
-            cb(null, true);
-        } else {
-            cb(new Error('Invalid file type. Only JPEG, PNG, WEBP, and GIF are allowed.'));
+        
+        if (!allowedMimes.includes(file.mimetype)) {
+            return cb(new Error('نوع الملف غير مسموح. فقط صور JPEG, PNG, WEBP, GIF'));
         }
+        
+        // ✅ Security: Check file extension
+        const allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+        const fileExtension = file.originalname.toLowerCase().slice(file.originalname.lastIndexOf('.'));
+        
+        if (!allowedExtensions.includes(fileExtension)) {
+            return cb(new Error('امتداد الملف غير صالح'));
+        }
+        
+        cb(null, true);
     }
 });
+
+/**
+ * ✅ Security: Validate image content (magic numbers)
+ * Checks the first bytes of file to ensure it's a real image
+ */
+const validateImageContent = (buffer) => {
+    const magicNumbers = {
+        jpg: [0xFF, 0xD8, 0xFF],
+        png: [0x89, 0x50, 0x4E, 0x47],
+        gif: [0x47, 0x49, 0x46],
+        webp: [0x52, 0x49, 0x46, 0x46]
+    };
+    
+    // Check JPG
+    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+        return 'image/jpeg';
+    }
+    
+    // Check PNG
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+        return 'image/png';
+    }
+    
+    // Check GIF
+    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+        return 'image/gif';
+    }
+    
+    // Check WEBP
+    if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
+        return 'image/webp';
+    }
+    
+    return null;
+};
 
 /**
  * Upload single image to Cloudinary
@@ -44,8 +89,25 @@ router.post('/image', upload.single('image'), async (req, res) => {
             });
         }
 
+        // ✅ Security: Validate actual file content
+        const actualMimeType = validateImageContent(req.file.buffer);
+        if (!actualMimeType) {
+            return res.status(400).json({
+                success: false,
+                error: 'الملف ليس صورة صالحة'
+            });
+        }
+        
+        // ✅ Security: Ensure mime type matches content
+        if (!req.file.mimetype.startsWith('image/')) {
+            return res.status(400).json({
+                success: false,
+                error: 'نوع الملف غير صالح'
+            });
+        }
+
         // Get optional product ID or generate unique identifier
-        const productId = req.body.productId || `product_${Date.now()}`;
+        const productId = req.body.productId || `product_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
         // Upload to Cloudinary using buffer
         const uploadResult = await new Promise((resolve, reject) => {

@@ -311,21 +311,32 @@ router.get('/my', [verifyToken], async (req, res) => {
 });
 
 // Get Single Order by ID (for invoice viewing)
-router.get('/:id', async (req, res) => {
+router.get('/:id', verifyToken, async (req, res) => {
     const { id } = req.params;
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
     
-    console.log('🔍 Fetching order with ID:', id);
+    console.log('🔍 Fetching order with ID:', id, 'for user:', userId, 'role:', userRole);
 
     try {
-        const { rows } = await query(
-            "SELECT * FROM orders WHERE id = $1",
-            [id]
-        );
+        // Admin and distributors can see all orders
+        // Regular users can only see their own orders
+        let sql, params;
+        
+        if (userRole === 'admin' || userRole === 'distributor') {
+            sql = "SELECT * FROM orders WHERE id = $1";
+            params = [id];
+        } else {
+            sql = "SELECT * FROM orders WHERE id = $1 AND user_id = $2";
+            params = [id, userId];
+        }
+        
+        const { rows } = await query(sql, params);
 
         if (rows.length === 0) {
             return res.status(404).json({ 
-                message: 'لم يتم العثور على الطلب',
-                error: 'Order not found' 
+                message: 'لم يتم العثور على الطلب أو ليس لديك صلاحية لعرضه',
+                error: 'Order not found or access denied' 
             });
         }
 
