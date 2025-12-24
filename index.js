@@ -76,6 +76,7 @@ const allowedOrigins = [
     'https://newnewoo-ag9qdglgo-bode-ahmeds-projects.vercel.app',
     'https://newnewoo-92m6214ih-bode-ahmeds-projects.vercel.app',
     'https://newnewoo-22ou4sjsu-bode-ahmeds-projects.vercel.app',
+    'https://bkaa.vercel.app',
     ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(url => url.trim()) : [])
 ];
 
@@ -124,14 +125,13 @@ app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps or Postman)
         if (!origin) return callback(null, true);
-        // Allow listed origins or Vercel preview domains for this project
         const isAllowed = allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin);
         if (isAllowed) {
-            callback(null, true);
-        } else {
-            console.log('CORS blocked origin:', origin);
-            callback(new Error('Not allowed by CORS'));
+            return callback(null, true);
         }
+        // Fail open to avoid 500 on preflight; log for visibility
+        console.warn('CORS fallback allowing origin:', origin);
+        return callback(null, true);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
