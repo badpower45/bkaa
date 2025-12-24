@@ -55,6 +55,8 @@ import orderCancellationRoutes from './routes/orderCancellation.js';
 import reviewsRoutes from './routes/reviews.js';
 import customerBlockRoutes from './routes/customerBlock.js';
 import loyaltyBarcodeRoutes from './routes/loyaltyBarcode.js';
+import magazineRoutes from './routes/magazine.js';
+import magazinePagesRoutes from './routes/magazinePages.js';
 
 // dotenv is loaded in database.js with the correct path
 // No need to load it again here
@@ -201,6 +203,8 @@ app.use('/api/order-cancellation', orderCancellationRoutes);
 app.use('/api/reviews', reviewLimiter, reviewsRoutes);
 app.use('/api/customer-block', customerBlockRoutes);
 app.use('/api/loyalty-barcode', loyaltyBarcodeRoutes);
+app.use('/api/magazine', magazineRoutes);
+app.use('/api/magazine', magazinePagesRoutes);
 
 // Image Upload Route
 import uploadRoutes from './routes/upload.js';
