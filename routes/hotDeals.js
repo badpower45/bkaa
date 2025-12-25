@@ -82,19 +82,25 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
         
         // If no product_id provided, create a new product for this hot deal
         if (!product_id) {
+            // Generate unique product ID
+            const newProductId = `HOTDEAL-${Date.now()}`;
+            
+            console.log(`🆕 Creating new product for hot deal with ID: ${newProductId}`);
+            
             const productResult = await query(`
                 INSERT INTO products 
-                (name, name_en, description, image, category, weight, barcode, is_offer_only, is_new)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, true, true)
+                (id, name, name_en, description, image, category, weight, barcode, is_offer_only, is_new)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true)
                 RETURNING id
             `, [
+                newProductId,
                 name, 
                 name_en || name, 
                 description || `عرض ساخن: ${name}`,
                 image,
                 category || 'عروض ساخنة',
                 weight || 'قطعة',
-                barcode || `HOTDEAL-${Date.now()}`,
+                barcode || newProductId,
             ]);
             
             finalProductId = productResult.rows[0].id;
@@ -107,6 +113,8 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
                     ON CONFLICT (branch_id, product_id) 
                     DO UPDATE SET price = EXCLUDED.price, discount_price = EXCLUDED.discount_price, stock_quantity = EXCLUDED.stock_quantity
                 `, [branch_id, finalProductId, old_price || price, price, total_quantity || 100]);
+                
+                console.log(`✅ Added product to branch ${branch_id} with price ${price}`);
             }
             
             console.log(`✅ Created new product for hot deal: ${finalProductId}`);
