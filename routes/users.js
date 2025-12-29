@@ -93,7 +93,12 @@ router.get('/profile', verifyToken, async (req, res) => {
 router.put('/profile', verifyToken, async (req, res) => {
     try {
         const userId = req.userId || req.user?.userId || req.user?.id;
-        const { name, email, phone, avatar } = req.body;
+        
+        if (!userId) {
+            return res.status(401).json({ success: false, error: "User ID not found in token" });
+        }
+        
+        const { name, email, phone, avatar, firstName, lastName, birthDate } = req.body;
         
         const updates = [];
         const values = [];
@@ -103,6 +108,14 @@ router.put('/profile', verifyToken, async (req, res) => {
             updates.push(`name = $${paramCount++}`);
             values.push(name);
         }
+        if (firstName !== undefined) {
+            updates.push(`first_name = $${paramCount++}`);
+            values.push(firstName);
+        }
+        if (lastName !== undefined) {
+            updates.push(`last_name = $${paramCount++}`);
+            values.push(lastName);
+        }
         if (email !== undefined) {
             updates.push(`email = $${paramCount++}`);
             values.push(email);
@@ -110,6 +123,10 @@ router.put('/profile', verifyToken, async (req, res) => {
         if (phone !== undefined) {
             updates.push(`phone = $${paramCount++}`);
             values.push(phone);
+        }
+        if (birthDate !== undefined) {
+            updates.push(`birth_date = $${paramCount++}`);
+            values.push(birthDate);
         }
         if (avatar !== undefined) {
             updates.push(`avatar = $${paramCount++}`);
@@ -121,7 +138,7 @@ router.put('/profile', verifyToken, async (req, res) => {
         }
 
         values.push(userId);
-        const sql = `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING id, name, email, phone, role, loyalty_points, avatar`;
+        const sql = `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING id, first_name, last_name, name, email, phone, birth_date, role, loyalty_points, avatar, email_verified`;
         
         const { rows } = await query(sql, values);
         
@@ -131,15 +148,19 @@ router.put('/profile', verifyToken, async (req, res) => {
 
         res.json({
             success: true,
-            message: "Profile updated successfully",
+            message: "تم تحديث البيانات بنجاح",
             data: {
                 id: rows[0].id,
+                firstName: rows[0].first_name,
+                lastName: rows[0].last_name,
                 name: rows[0].name,
                 email: rows[0].email,
                 phone: rows[0].phone,
+                birthDate: rows[0].birth_date,
                 role: rows[0].role,
                 avatar: rows[0].avatar,
-                loyaltyPoints: rows[0].loyalty_points
+                loyaltyPoints: rows[0].loyalty_points,
+                emailVerified: rows[0].email_verified
             }
         });
     } catch (err) {

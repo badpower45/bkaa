@@ -32,15 +32,19 @@ router.post('/register', async (req, res) => {
     
     // ✅ Security: Use stronger hashing (12 rounds)
     const hashedPassword = bcrypt.hashSync(password, 12);
+    
+    // Generate email verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationTokenHash = crypto.createHash('sha256').update(verificationToken).digest('hex');
 
     try {
         const sql = `
             INSERT INTO users (
                 first_name, last_name, name, email, password, phone, birth_date, 
-                role, profile_completed, created_at
+                role, profile_completed, email_verified, email_verification_token, created_at
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 'customer', true, NOW()) 
-            RETURNING id, first_name, last_name, email, phone, birth_date
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'customer', true, false, $8, NOW()) 
+            RETURNING id, first_name, last_name, email, phone, birth_date, email_verified
         `;
         const fullName = `${firstName} ${lastName}`;
         const { rows } = await query(sql, [
@@ -50,15 +54,25 @@ router.post('/register', async (req, res) => {
             email, 
             hashedPassword, 
             phone,
-            birthDate || null
+            birthDate || null,
+            verificationTokenHash
         ]);
         const user = rows[0];
+        
+        // Generate verification URL
+        const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${verificationToken}`;
+        
+        console.log(`📧 Email verification link for ${email}: ${verificationUrl}`);
+        // TODO: Send verification email using Supabase or nodemailer
+        // await sendVerificationEmail(email, user.first_name, verificationUrl);
 
         const token = jwt.sign({ id: user.id, role: 'customer' }, SECRET_KEY, { expiresIn: 86400 });
 
         res.status(200).send({
             auth: true,
             token: token,
+            emailVerificationRequired: !user.email_verified,
+            message: user.email_verified ? undefined : 'تم إرسال رابط التحقق إلى بريدك الإلكتروني',
             user: { 
                 id: user.id, 
                 firstName: user.first_name,
@@ -66,7 +80,8 @@ router.post('/register', async (req, res) => {
                 email: user.email, 
                 phone: user.phone,
                 birthDate: user.birth_date,
-                role: 'customer' 
+                role: 'customer',
+                emailVerified: user.email_verified
             }
         });
     } catch (err) {
@@ -295,7 +310,12 @@ router.post('/reset-password', async (req, res) => {
 
 // Google OAuth Login/Register - Enhanced with profile completion
 router.post('/google', async (req, res) => {
-    const { googleId, email, name, picture, phone, birthDate, givenName, familyName } = req.body;
+    const { 
+        googleId, email, name, picture, 
+        phone, birthDate, givenName, familyName,
+        // Additional Google fields
+        phoneNumbers, ageRange, birthday
+    } = req.body;
     
     if (!googleId || !email) {
         return res.status(400).json({ error: 'Google ID and email are required' });
@@ -316,15 +336,22 @@ router.post('/google', async (req, res) => {
             const firstName = givenName || name?.split(' ')[0] || 'User';
             const lastName = familyName || name?.split(' ').slice(1).join(' ') || '';
             
-            needsCompletion = !phone || !birthDate;
+            // Extract phone from Google data if available
+            const userPhone = phone || (phoneNumbers && phoneNumbers.length > 0 ? phoneNumbers[0].value : null);
+            
+            // Extract birth date from Google data if available
+            const userBirthDate = birthDate || birthday || null;
+            
+            needsCompletion = !userPhone || !userBirthDate;
             
             const { rows: newUserRows } = await query(`
                 INSERT INTO users (
                     first_name, last_name, name, email, google_id, avatar, 
-                    phone, birth_date, role, password, profile_completed, created_at
+                    phone, birth_date, role, password, profile_completed, 
+                    email_verified, created_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'customer', '', $9, NOW())
-                RETURNING id, first_name, last_name, email, phone, birth_date, avatar, profile_completed
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'customer', '', $9, true, NOW())
+                RETURNING id, first_name, last_name, email, phone, birth_date, avatar, profile_completed, email_verified
             `, [
                 firstName, 
                 lastName, 
@@ -332,12 +359,12 @@ router.post('/google', async (req, res) => {
                 email, 
                 googleId, 
                 picture,
-                phone || null,
-                birthDate || null,
+                userPhone || null,
+                userBirthDate || null,
                 !needsCompletion
             ]);
             user = newUserRows[0];
-            console.log(`✅ New Google user registered: ${email}`);
+            console.log(`✅ New Google user registered: ${email} (verified: true)`);
         } else {
             user = rows[0];
             // Update google_id, avatar, and missing fields if not set
@@ -407,7 +434,12 @@ router.post('/google', async (req, res) => {
 
 // Facebook OAuth Login/Register - Enhanced with profile completion
 router.post('/facebook', async (req, res) => {
-    const { facebookId, email, name, picture, phone, birthDate, firstName, lastName } = req.body;
+    const { 
+        facebookId, email, name, picture, phone, birthDate, 
+        firstName, lastName,
+        // Additional Facebook fields
+        birthday, age_range, location
+    } = req.body;
     
     if (!facebookId) {
         return res.status(400).json({ error: 'Facebook ID is required' });
@@ -428,15 +460,19 @@ router.post('/facebook', async (req, res) => {
             const first = firstName || name?.split(' ')[0] || 'User';
             const last = lastName || name?.split(' ').slice(1).join(' ') || '';
             
-            needsCompletion = !phone || !birthDate || !email;
+            // Extract birth date from Facebook data
+            const userBirthDate = birthDate || birthday || null;
+            
+            needsCompletion = !phone || !userBirthDate || !email;
             
             const { rows: newUserRows } = await query(`
                 INSERT INTO users (
                     first_name, last_name, name, email, facebook_id, avatar, 
-                    phone, birth_date, role, password, profile_completed, created_at
+                    phone, birth_date, role, password, profile_completed, 
+                    email_verified, created_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'customer', '', $9, NOW())
-                RETURNING id, first_name, last_name, email, phone, birth_date, avatar, profile_completed
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'customer', '', $9, $10, NOW())
+                RETURNING id, first_name, last_name, email, phone, birth_date, avatar, profile_completed, email_verified
             `, [
                 first,
                 last,
@@ -445,11 +481,12 @@ router.post('/facebook', async (req, res) => {
                 facebookId,
                 picture,
                 phone || null,
-                birthDate || null,
-                !needsCompletion
+                userBirthDate || null,
+                !needsCompletion,
+                email ? true : false  // Verify email if provided by Facebook
             ]);
             user = newUserRows[0];
-            console.log(`✅ New Facebook user registered: ${name}`);
+            console.log(`✅ New Facebook user registered: ${name} (email_verified: ${email ? true : false})`);
         } else {
             user = rows[0];
             // Update facebook_id, avatar, and missing fields if not set
@@ -606,4 +643,111 @@ router.post('/complete-profile', async (req, res) => {
     }
 });
 
-export default router;
+// ============================================
+// Email Verification
+// ============================================
+
+// Verify Email with Token
+router.get('/verify-email', async (req, res) => {
+    const { token } = req.query;
+    
+    if (!token) {
+        return res.status(400).json({ error: 'رمز التحقق مطلوب' });
+    }
+
+    try {
+        // Hash the token to compare with stored hash
+        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        
+        // Find user with this verification token
+        const { rows } = await query(`
+            SELECT id, email, first_name FROM users 
+            WHERE email_verification_token = $1 AND email_verified = false
+        `, [tokenHash]);
+
+        if (rows.length === 0) {
+            return res.status(400).json({ error: 'رمز التحقق غير صالح أو تم التحقق من الإيميل بالفعل' });
+        }
+
+        const user = rows[0];
+        
+        // Mark email as verified and clear verification token
+        await query(`
+            UPDATE users 
+            SET email_verified = true, email_verification_token = NULL 
+            WHERE id = $1
+        `, [user.id]);
+
+        console.log(`✅ Email verified for ${user.email}`);
+
+        res.status(200).json({ 
+            success: true,
+            message: 'تم التحقق من البريد الإلكتروني بنجاح',
+            user: {
+                id: user.id,
+                email: user.email,
+                firstName: user.first_name,
+                emailVerified: true
+            }
+        });
+    } catch (err) {
+        console.error('Email verification error:', err);
+        res.status(500).json({ error: 'حدث خطأ أثناء التحقق من الإيميل' });
+    }
+});
+
+// Resend Verification Email
+router.post('/resend-verification', async (req, res) => {
+    const { email } = req.body;
+    
+    if (!email) {
+        return res.status(400).json({ error: 'البريد الإلكتروني مطلوب' });
+    }
+
+    try {
+        // Check if user exists and email is not verified
+        const { rows } = await query(
+            "SELECT id, first_name, email_verified FROM users WHERE email = $1",
+            [email]
+        );
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'المستخدم غير موجود' });
+        }
+
+        const user = rows[0];
+        
+        if (user.email_verified) {
+            return res.status(400).json({ error: 'البريد الإلكتروني محقق بالفعل' });
+        }
+        
+        // Generate new verification token
+        const verificationToken = crypto.randomBytes(32).toString('hex');
+        const verificationTokenHash = crypto.createHash('sha256').update(verificationToken).digest('hex');
+
+        // Update verification token
+        await query(`
+            UPDATE users 
+            SET email_verification_token = $1 
+            WHERE id = $2
+        `, [verificationTokenHash, user.id]);
+
+        // Generate verification URL
+        const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${verificationToken}`;
+        
+        console.log(`📧 Resent verification link for ${email}: ${verificationUrl}`);
+        // TODO: Send verification email
+        // await sendVerificationEmail(email, user.first_name, verificationUrl);
+
+        res.status(200).json({ 
+            success: true,
+            message: 'تم إرسال رابط التحقق إلى بريدك الإلكتروني',
+            // Remove in production:
+            verificationUrl: process.env.NODE_ENV !== 'production' ? verificationUrl : undefined
+        });
+    } catch (err) {
+        console.error('Resend verification error:', err);
+        res.status(500).json({ error: 'حدث خطأ أثناء إرسال رابط التحقق' });
+    }
+});
+
