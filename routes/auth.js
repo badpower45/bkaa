@@ -751,3 +751,4 @@ router.post('/resend-verification', async (req, res) => {
     }
 });
 
+export default router;
