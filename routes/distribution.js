@@ -433,8 +433,18 @@ router.post('/assign-delivery/:orderId', verifyToken, async (req, res) => {
         
         // جلب بيانات الطلب للإشعار
         const { rows: orderData } = await query(`
-            SELECT o.*, u.name as customer_name, u.phone as customer_phone, u.address as customer_address,
-                   b.name as branch_name, b.address as branch_address, b.phone as branch_phone
+            SELECT 
+                o.*,
+                u.name as customer_name,
+                u.phone as customer_phone,
+                COALESCE(
+                    o.shipping_info->>'address',
+                    o.shipping_info->>'deliveryAddress',
+                    o.shipping_info->>'delivery_address'
+                ) as customer_address,
+                b.name as branch_name,
+                b.address as branch_address,
+                b.phone as branch_phone
             FROM orders o
             LEFT JOIN users u ON o.user_id = u.id
             LEFT JOIN branches b ON o.branch_id = b.id
