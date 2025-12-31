@@ -392,9 +392,16 @@ router.post('/assign-delivery/:orderId', verifyToken, async (req, res) => {
         
         console.log(`📦 Assigning and auto-accepting order ${orderId} to delivery staff ${deliveryStaffId}`);
         console.log(`⏱️ Expected delivery: ${deliveryTime} minutes`);
+
+        // احفظ الموظف السابق (لو موجود) لتعديل عدّاد الطلبات بشكل صحيح
+        const { rows: existingAssignment } = await query(
+            'SELECT delivery_staff_id FROM order_assignments WHERE order_id = $1 LIMIT 1',
+            [orderId]
+        );
+        const previousStaffId = existingAssignment[0]?.delivery_staff_id;
         
         // تحديث سجل التعيين - يتم القبول تلقائياً
-        await query(`
+        const updateResult = await query(`
             UPDATE order_assignments 
             SET delivery_staff_id = $1, 
                 status = 'accepted', 
@@ -403,14 +410,26 @@ router.post('/assign-delivery/:orderId', verifyToken, async (req, res) => {
                 expected_delivery_time = $3
             WHERE order_id = $2
         `, [deliveryStaffId, orderId, deliveryTime]);
+
+        // لو مفيش سجل للتعيين، أنشئ واحد جديد
+        if (updateResult.rowCount === 0) {
+            await query(`
+                INSERT INTO order_assignments (
+                    order_id, delivery_staff_id, status, assigned_at, accepted_at, expected_delivery_time
+                ) VALUES ($1, $2, 'accepted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $3)
+            `, [orderId, deliveryStaffId, deliveryTime]);
+        }
         
         // تحديث حالة الطلب مباشرة إلى out_for_delivery
         await query("UPDATE orders SET status = 'out_for_delivery' WHERE id = $1", [orderId]);
         
-        // زيادة عدد الطلبات للديليفري
-        await query(`
-            UPDATE delivery_staff SET current_orders = current_orders + 1 WHERE id = $1
-        `, [deliveryStaffId]);
+        // تحديث عدّاد الطلبات للديليفري (منع التكرار عند إعادة التعيين)
+        if (!previousStaffId) {
+            await query('UPDATE delivery_staff SET current_orders = current_orders + 1 WHERE id = $1', [deliveryStaffId]);
+        } else if (previousStaffId !== deliveryStaffId) {
+            await query('UPDATE delivery_staff SET current_orders = GREATEST(current_orders - 1, 0) WHERE id = $1', [previousStaffId]);
+            await query('UPDATE delivery_staff SET current_orders = current_orders + 1 WHERE id = $1', [deliveryStaffId]);
+        }
         
         // جلب بيانات الطلب للإشعار
         const { rows: orderData } = await query(`
