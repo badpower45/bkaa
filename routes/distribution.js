@@ -664,8 +664,8 @@ router.post('/reject-order/:orderId', verifyToken, async (req, res) => {
             WHERE order_id = $1
         `, [orderId, reason]);
         
-        // تحديث حالة الطلب - يرجع للموزع
-        await query("UPDATE orders SET status = 'ready' WHERE id = $1", [orderId]);
+        // تحديث حالة الطلب - ملغي تماماً
+        await query("UPDATE orders SET status = 'cancelled' WHERE id = $1", [orderId]);
         
         // تحديث إحصائيات الديليفري
         if (assignmentRows.length > 0 && assignmentRows[0].delivery_staff_id) {
@@ -678,7 +678,9 @@ router.post('/reject-order/:orderId', verifyToken, async (req, res) => {
         }
         
         await query('COMMIT');
-        res.json({ message: 'success', status: 'rejected' });
+        // إشعار العميل بالإلغاء
+        notifyCustomerOrderUpdate(orderId, 'cancelled', { reason });
+        res.json({ message: 'success', status: 'cancelled' });
     } catch (err) {
         await query('ROLLBACK');
         console.error('Error rejecting order:', err);

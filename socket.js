@@ -312,7 +312,8 @@ export const notifyCustomerOrderUpdate = (orderId, status, additionalData = {}) 
             'picked_up': 'السائق استلم طلبك وفي الطريق إليك',
             'arriving': 'السائق وصل - في انتظارك',
             'delivered': 'تم توصيل طلبك بنجاح! 🎉',
-            'rejected': 'حدثت مشكلة في التوصيل'
+            'rejected': 'حدثت مشكلة في التوصيل',
+            'cancelled': 'تم إلغاء الطلب'
         };
         
         io.to(`order_${orderId}`).emit('order:status:update', {
