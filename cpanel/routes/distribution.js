@@ -373,7 +373,7 @@ router.get('/available-delivery/:branchId', verifyToken, async (req, res) => {
     }
 });
 
-// تعيين ديليفري للطلب (مع مهلة 5 دقائق للقبول)
+// تعيين ديليفري للطلب (يتم القبول تلقائياً)
 router.post('/assign-delivery/:orderId', verifyToken, async (req, res) => {
     const { orderId } = req.params;
     const { deliveryStaffId, expectedDeliveryTime } = req.body;
@@ -381,23 +381,24 @@ router.post('/assign-delivery/:orderId', verifyToken, async (req, res) => {
     try {
         await query('BEGIN');
         
-        // حساب الموعد النهائي للقبول (5 دقائق)
-        const acceptDeadline = new Date(Date.now() + 5 * 60 * 1000);
         const deliveryTime = expectedDeliveryTime || DEFAULT_EXPECTED_DELIVERY_TIME;
         
-        // تحديث سجل التعيين
+        console.log(`📦 Assigning and auto-accepting order ${orderId} to delivery staff ${deliveryStaffId}`);
+        console.log(`⏱️ Expected delivery: ${deliveryTime} minutes`);
+        
+        // تحديث سجل التعيين - يتم القبول تلقائياً
         await query(`
             UPDATE order_assignments 
             SET delivery_staff_id = $1, 
-                status = 'assigned', 
+                status = 'accepted', 
                 assigned_at = CURRENT_TIMESTAMP,
-                accept_deadline = $3,
-                expected_delivery_time = $4
+                accepted_at = CURRENT_TIMESTAMP,
+                expected_delivery_time = $3
             WHERE order_id = $2
-        `, [deliveryStaffId, orderId, acceptDeadline, deliveryTime]);
+        `, [deliveryStaffId, orderId, deliveryTime]);
         
-        // تحديث حالة الطلب
-        await query("UPDATE orders SET status = 'assigned_to_delivery' WHERE id = $1", [orderId]);
+        // تحديث حالة الطلب مباشرة إلى out_for_delivery
+        await query("UPDATE orders SET status = 'out_for_delivery' WHERE id = $1", [orderId]);
         
         // زيادة عدد الطلبات للديليفري
         await query(`
@@ -406,7 +407,8 @@ router.post('/assign-delivery/:orderId', verifyToken, async (req, res) => {
         
         // جلب بيانات الطلب للإشعار
         const { rows: orderData } = await query(`
-            SELECT o.*, u.name as customer_name, b.name as branch_name, b.address as branch_address
+            SELECT o.*, u.name as customer_name, u.phone as customer_phone, u.address as customer_address,
+                   b.name as branch_name, b.address as branch_address, b.phone as branch_phone
             FROM orders o
             LEFT JOIN users u ON o.user_id = u.id
             LEFT JOIN branches b ON o.branch_id = b.id
@@ -415,20 +417,21 @@ router.post('/assign-delivery/:orderId', verifyToken, async (req, res) => {
         
         await query('COMMIT');
         
-        // إرسال إشعار للسائق
+        // إرسال إشعار للسائق مع كامل بيانات الطلب
         notifyDriverNewOrder(deliveryStaffId, {
             orderId,
             order: orderData[0],
-            acceptDeadline: acceptDeadline.toISOString(),
+            expectedDeliveryTime: deliveryTime,
+            autoAccepted: true,
+            message: `طلب جديد #${orderId} - تم التعيين والقبول تلقائياً`
+        });
+        
+        // إشعار العميل بأن الطلب في الطريق
+        notifyCustomerOrderUpdate(orderId, 'out_for_delivery', {
             expectedDeliveryTime: deliveryTime
         });
         
-        // إشعار العميل بتعيين سائق
-        notifyCustomerOrderUpdate(orderId, 'assigned_to_delivery', {
-            expectedDeliveryTime: deliveryTime
-        });
-        
-        res.json({ message: 'success', status: 'assigned', acceptDeadline });
+        res.json({ message: 'success', status: 'accepted', expectedDeliveryTime: deliveryTime });
     } catch (err) {
         await query('ROLLBACK');
         console.error('Error assigning delivery:', err);
@@ -436,51 +439,8 @@ router.post('/assign-delivery/:orderId', verifyToken, async (req, res) => {
     }
 });
 
-// الديليفري يقبل الطلب (خلال 5 دقائق)
-router.post('/accept-order/:orderId', verifyToken, async (req, res) => {
-    const { orderId } = req.params;
-    
-    try {
-        // التحقق من أن الطلب لم ينتهِ وقته
-        const { rows: assignment } = await query(
-            'SELECT * FROM order_assignments WHERE order_id = $1',
-            [orderId]
-        );
-        
-        if (assignment.length === 0) {
-            return res.status(404).json({ error: 'الطلب غير موجود' });
-        }
-        
-        const order = assignment[0];
-        
-        if (order.status !== 'assigned') {
-            return res.status(400).json({ error: 'لا يمكن قبول هذا الطلب' });
-        }
-        
-        // التحقق من انتهاء الوقت
-        if (order.accept_deadline && new Date(order.accept_deadline) < new Date()) {
-            return res.status(400).json({ error: 'انتهى وقت قبول الطلب' });
-        }
-        
-        await query(`
-            UPDATE order_assignments 
-            SET status = 'accepted', accepted_at = CURRENT_TIMESTAMP
-            WHERE order_id = $1
-        `, [orderId]);
-        
-        await query("UPDATE orders SET status = 'out_for_delivery' WHERE id = $1", [orderId]);
-        
-        // إشعار العميل
-        notifyCustomerOrderUpdate(orderId, 'accepted', {
-            expectedDeliveryTime: order.expected_delivery_time
-        });
-        
-        res.json({ message: 'success', status: 'accepted' });
-    } catch (err) {
-        console.error('Error accepting order:', err);
-        res.status(400).json({ error: err.message });
-    }
-});
+// ملاحظة: تم إلغاء endpoint /accept-order لأن القبول يتم تلقائياً عند التعيين
+// يمكن للديليفري تأكيد استلام الطلب مباشرة من الفرع
 
 // الديليفري وصل الفرع واستلم الطلب
 router.post('/pickup-order/:orderId', verifyToken, async (req, res) => {
@@ -690,52 +650,7 @@ router.post('/reject-order/:orderId', verifyToken, async (req, res) => {
     }
 });
 
-// انتهاء وقت قبول الطلب - يرجع للموزع (يُستدعى من cron job أو من الفرونت)
-router.post('/expire-order/:orderId', verifyToken, async (req, res) => {
-    const { orderId } = req.params;
-    
-    try {
-        await query('BEGIN');
-        
-        const { rows: assignmentRows } = await query(
-            'SELECT delivery_staff_id, status FROM order_assignments WHERE order_id = $1',
-            [orderId]
-        );
-        
-        if (assignmentRows.length === 0 || assignmentRows[0].status !== 'assigned') {
-            await query('ROLLBACK');
-            return res.status(400).json({ error: 'الطلب غير متاح للإلغاء' });
-        }
-        
-        // إلغاء التعيين
-        await query(`
-            UPDATE order_assignments 
-            SET status = 'expired', 
-                delivery_staff_id = NULL
-            WHERE order_id = $1
-        `, [orderId]);
-        
-        // إرجاع الطلب للموزع
-        await query("UPDATE orders SET status = 'ready' WHERE id = $1", [orderId]);
-        
-        // تحديث إحصائيات الديليفري
-        if (assignmentRows[0].delivery_staff_id) {
-            await query(`
-                UPDATE delivery_staff 
-                SET current_orders = GREATEST(0, current_orders - 1),
-                    expired_orders = expired_orders + 1
-                WHERE id = $1
-            `, [assignmentRows[0].delivery_staff_id]);
-        }
-        
-        await query('COMMIT');
-        res.json({ message: 'success', status: 'expired' });
-    } catch (err) {
-        await query('ROLLBACK');
-        console.error('Error expiring order:', err);
-        res.status(400).json({ error: err.message });
-    }
-});
+// ملاحظة: تم إلغاء endpoint /expire-order لأن القبول يتم تلقائياً وليس هناك مهلة انتظار
 
 // ============================================
 // صفحة الديليفري

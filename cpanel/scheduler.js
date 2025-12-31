@@ -1,5 +1,5 @@
 const { query } = require('./database');
-const { notifyDriverNewOrder, notifyCustomerOrderUpdate, notifyDistributorsNewOrder } = require('./socket');
+const { notifyCustomerOrderUpdate } = require('./socket');
 
 // =============================================
 // Scheduler للمهام الدورية
@@ -7,76 +7,7 @@ const { notifyDriverNewOrder, notifyCustomerOrderUpdate, notifyDistributorsNewOr
 
 let schedulerInterval = null;
 
-/**
- * فحص الطلبات المنتهية مهلة قبولها
- * يتم تشغيلها كل دقيقة
- */
-const checkExpiredOrderAssignments = async () => {
-    try {
-        // جلب الطلبات التي انتهت مهلة قبولها
-        const { rows: expiredOrders } = await query(`
-            SELECT oa.id, oa.order_id, oa.delivery_staff_id, o.branch_id
-            FROM order_assignments oa
-            JOIN orders o ON oa.order_id = o.id
-            WHERE oa.status = 'assigned' 
-              AND oa.accept_deadline IS NOT NULL 
-              AND oa.accept_deadline < NOW()
-        `);
-
-        for (const order of expiredOrders) {
-            try {
-                await query('BEGIN');
-
-                // إلغاء التعيين
-                await query(`
-                    UPDATE order_assignments 
-                    SET status = 'expired', 
-                        delivery_staff_id = NULL
-                    WHERE id = $1
-                `, [order.id]);
-
-                // إرجاع الطلب لحالة "جاهز"
-                await query("UPDATE orders SET status = 'ready' WHERE id = $1", [order.order_id]);
-
-                // تحديث إحصائيات الديليفري
-                if (order.delivery_staff_id) {
-                    await query(`
-                        UPDATE delivery_staff 
-                        SET current_orders = GREATEST(0, current_orders - 1),
-                            expired_orders = expired_orders + 1
-                        WHERE id = $1
-                    `, [order.delivery_staff_id]);
-                }
-
-                await query('COMMIT');
-
-                console.log(`⏰ Order #${order.order_id} expired - returned to ready status`);
-
-                // إشعار الموزعين بأن الطلب متاح مرة أخرى
-                notifyDistributorsNewOrder(order.branch_id, {
-                    orderId: order.order_id,
-                    type: 'order_returned',
-                    message: `الطلب #${order.order_id} عاد للتوزيع - انتهت مهلة السائق`
-                });
-
-                // إشعار العميل
-                notifyCustomerOrderUpdate(order.order_id, 'ready', {
-                    message: 'جاري البحث عن سائق جديد'
-                });
-
-            } catch (err) {
-                await query('ROLLBACK');
-                console.error(`Error expiring order ${order.order_id}:`, err);
-            }
-        }
-
-        if (expiredOrders.length > 0) {
-            console.log(`⏰ Processed ${expiredOrders.length} expired order assignments`);
-        }
-    } catch (err) {
-        console.error('Error in checkExpiredOrderAssignments:', err);
-    }
-};
+// ملاحظة: تم إلغاء checkExpiredOrderAssignments لأن القبول يتم تلقائياً
 
 /**
  * فحص الطلبات المتأخرة وإرسال تنبيهات
@@ -149,9 +80,8 @@ const cleanupOldData = async () => {
 const startScheduler = () => {
     console.log('🕐 Starting order scheduler...');
 
-    // تشغيل فحص الطلبات المنتهية كل دقيقة
+    // تشغيل فحص الطلبات المتأخرة كل دقيقة
     schedulerInterval = setInterval(async () => {
-        await checkExpiredOrderAssignments();
         await checkLateOrders();
     }, 60 * 1000); // كل دقيقة
 
@@ -159,10 +89,9 @@ const startScheduler = () => {
     setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 
     // تشغيل فوري عند البدء
-    checkExpiredOrderAssignments();
     checkLateOrders();
 
-    console.log('✅ Order scheduler started');
+    console.log('✅ Order scheduler started (auto-accept enabled)');
 };
 
 /**
