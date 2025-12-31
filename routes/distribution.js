@@ -8,6 +8,7 @@ import {
     getDriverLocation,
     isDriverConnected 
 } from '../socket.js';
+import bcrypt from 'bcryptjs';
 
 const router = express.Router();
 
@@ -52,6 +53,12 @@ router.post('/delivery-staff', [verifyToken, isAdmin], async (req, res) => {
     const { name, email, password, phone, phone2, branchIds, maxOrders } = req.body;
     
     try {
+        if (!password) {
+            return res.status(400).json({ error: 'Password is required for delivery staff' });
+        }
+
+        const hashedPassword = bcrypt.hashSync(password, 12);
+
         await query('BEGIN');
         
         // إنشاء المستخدم أولاً
@@ -60,7 +67,7 @@ router.post('/delivery-staff', [verifyToken, isAdmin], async (req, res) => {
             VALUES ($1, $2, $3, 'delivery')
             RETURNING id
         `;
-        const { rows: userRows } = await query(userSql, [name, email, password]);
+        const { rows: userRows } = await query(userSql, [name, email, hashedPassword]);
         const userId = userRows[0].id;
         
         // إنشاء سجل موظف التوصيل

@@ -103,7 +103,21 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 
         if (!user) return res.status(404).send('No user found.');
 
-        const passwordIsValid = bcrypt.compareSync(password, user.password);
+        const storedPassword = user.password || '';
+        const isHashed = storedPassword.startsWith('$2');
+        let passwordIsValid = false;
+
+        if (isHashed) {
+            passwordIsValid = bcrypt.compareSync(password, storedPassword);
+        } else {
+            // Legacy plain-text password fallback (rehash on successful login)
+            passwordIsValid = storedPassword === password;
+            if (passwordIsValid) {
+                const newHash = bcrypt.hashSync(password, 12);
+                await query('UPDATE users SET password = $1 WHERE id = $2', [newHash, user.id]);
+            }
+        }
+
         if (!passwordIsValid) return res.status(401).send({ auth: false, token: null });
 
         const token = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, { expiresIn: 86400 });
