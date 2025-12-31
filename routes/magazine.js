@@ -7,22 +7,32 @@ const router = express.Router();
 // Get all magazine offers (public)
 router.get('/', async (req, res) => {
     try {
-        const { category } = req.query;
+        const { category, brandId } = req.query;
         
         let sql = `
-            SELECT * FROM magazine_offers 
-            WHERE is_active = true 
-            AND (start_date IS NULL OR start_date <= NOW())
-            AND (end_date IS NULL OR end_date >= NOW())
+            SELECT mo.*, p.brand_id
+            FROM magazine_offers mo
+            LEFT JOIN products p ON mo.product_id = p.id
+            WHERE mo.is_active = true 
+            AND (mo.start_date IS NULL OR mo.start_date <= NOW())
+            AND (mo.end_date IS NULL OR mo.end_date >= NOW())
         `;
         const params = [];
+        let idx = 1;
         
         if (category && category !== 'جميع العروض') {
-            sql += ` AND category = $1`;
+            sql += ` AND mo.category = $${idx}`;
             params.push(category);
+            idx++;
+        }
+
+        if (brandId) {
+            sql += ` AND p.brand_id = $${idx}`;
+            params.push(brandId);
+            idx++;
         }
         
-        sql += ` ORDER BY sort_order ASC, created_at DESC`;
+        sql += ` ORDER BY mo.sort_order ASC, mo.created_at DESC`;
         
         const { rows } = await query(sql, params);
         

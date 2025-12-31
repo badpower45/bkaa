@@ -134,10 +134,15 @@ router.get('/', async (req, res) => {
                 SELECT DISTINCT ON (p.id) p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, 
                        p.is_organic, p.is_new, p.barcode, p.shelf_location, p.subcategory, p.description,
                        bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id,
-                       p.brand_id, b.name_ar as brand_name, b.name_en as brand_name_en
+                       p.brand_id, b.name_ar as brand_name, b.name_en as brand_name_en,
+                       (mo.id IS NOT NULL) AS in_magazine
                 FROM products p
                 LEFT JOIN branch_products bp ON p.id = bp.product_id
                 LEFT JOIN brands b ON p.brand_id = b.id
+                LEFT JOIN magazine_offers mo ON mo.product_id = p.id 
+                    AND mo.is_active = TRUE 
+                    AND (mo.start_date IS NULL OR mo.start_date <= NOW())
+                    AND (mo.end_date IS NULL OR mo.end_date >= NOW())
                 WHERE 1=1
             `;
             const params = [];
@@ -188,10 +193,15 @@ router.get('/', async (req, res) => {
         let sql = `
             SELECT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, p.is_organic, p.is_new, p.barcode, p.shelf_location,
                    bp.price, bp.discount_price, bp.stock_quantity, bp.is_available,
-                   p.brand_id, b.name_ar as brand_name, b.name_en as brand_name_en
+                   p.brand_id, b.name_ar as brand_name, b.name_en as brand_name_en,
+                   (mo.id IS NOT NULL) AS in_magazine
             FROM products p
             JOIN branch_products bp ON p.id = bp.product_id
             LEFT JOIN brands b ON p.brand_id = b.id
+            LEFT JOIN magazine_offers mo ON mo.product_id = p.id 
+                AND mo.is_active = TRUE 
+                AND (mo.start_date IS NULL OR mo.start_date <= NOW())
+                AND (mo.end_date IS NULL OR mo.end_date >= NOW())
             WHERE bp.branch_id = $1 AND bp.is_available = TRUE AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
         `;
         const params = [branchId];
@@ -209,6 +219,9 @@ router.get('/', async (req, res) => {
             paramIndex++;
         }
         
+        // Hide منتجات المجلة من القوائم العادية
+        sql += ` AND mo.id IS NULL`;
+
         // Add ORDER BY for consistent results
         sql += ` ORDER BY p.id`;
         
