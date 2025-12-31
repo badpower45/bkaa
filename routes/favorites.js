@@ -9,6 +9,15 @@ router.get('/', verifyToken, async (req, res) => {
     try {
         const userId = req.userId;
         
+        // Validate userId is a number (not UUID)
+        if (!userId || isNaN(parseInt(userId))) {
+            console.error('Invalid userId format:', userId);
+            return res.status(400).json({ 
+                error: 'Invalid user ID format. Please login again.',
+                details: 'User ID must be a valid integer'
+            });
+        }
+        
         const result = await query(`
             SELECT 
                 f.id,
@@ -33,7 +42,7 @@ router.get('/', verifyToken, async (req, res) => {
             LEFT JOIN branch_products bp ON p.id::text = bp.product_id::text AND bp.branch_id = 1
             WHERE f.user_id = $1
             ORDER BY f.created_at DESC
-        `, [userId]);
+        `, [parseInt(userId)]);
         
         const favorites = result.rows.map(row => ({
             id: row.product_id,
@@ -64,6 +73,14 @@ router.get('/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
         
+        // Validate userId is a number
+        if (isNaN(parseInt(userId))) {
+            return res.status(400).json({ 
+                error: 'Invalid user ID format',
+                details: 'User ID must be a valid integer'
+            });
+        }
+        
         // Get favorites with product details (using only existing columns)
         const result = await pool.query(`
             SELECT 
@@ -89,7 +106,7 @@ router.get('/:userId', async (req, res) => {
             LEFT JOIN branch_products bp ON p.id::text = bp.product_id::text AND bp.branch_id = 1
             WHERE f.user_id = $1
             ORDER BY f.created_at DESC
-        `, [userId]);
+        `, [parseInt(userId)]);
         
         // Transform to match Product type
         const favorites = result.rows.map(row => ({
@@ -127,10 +144,15 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ success: false, error: 'userId and productId are required' });
         }
         
+        // Validate userId is a number
+        if (isNaN(parseInt(userId))) {
+            return res.status(400).json({ success: false, error: 'Invalid user ID format' });
+        }
+        
         // Check if already in favorites
         const existing = await pool.query(
             'SELECT id FROM favorites WHERE user_id = $1 AND product_id = $2',
-            [userId, productId]
+            [parseInt(userId), productId]
         );
         
         if (existing.rows.length > 0) {
@@ -140,7 +162,7 @@ router.post('/', async (req, res) => {
         // Add to favorites
         const result = await pool.query(
             'INSERT INTO favorites (user_id, product_id) VALUES ($1, $2) RETURNING id, created_at',
-            [userId, productId]
+            [parseInt(userId), productId]
         );
         
         res.json({ 
@@ -159,9 +181,14 @@ router.delete('/:userId/:productId', async (req, res) => {
     try {
         const { userId, productId } = req.params;
         
+        // Validate userId
+        if (isNaN(parseInt(userId))) {
+            return res.status(400).json({ success: false, error: 'Invalid user ID format' });
+        }
+        
         const result = await pool.query(
             'DELETE FROM favorites WHERE user_id = $1 AND product_id = $2 RETURNING id',
-            [userId, productId]
+            [parseInt(userId), productId]
         );
         
         if (result.rows.length === 0) {
@@ -180,9 +207,14 @@ router.get('/:userId/check/:productId', async (req, res) => {
     try {
         const { userId, productId } = req.params;
         
+        // Validate userId
+        if (isNaN(parseInt(userId))) {
+            return res.status(400).json({ success: false, error: 'Invalid user ID format' });
+        }
+        
         const result = await pool.query(
             'SELECT id FROM favorites WHERE user_id = $1 AND product_id = $2',
-            [userId, productId]
+            [parseInt(userId), productId]
         );
         
         res.json({ 
@@ -201,7 +233,12 @@ router.delete('/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
         
-        await pool.query('DELETE FROM favorites WHERE user_id = $1', [userId]);
+        // Validate userId
+        if (isNaN(parseInt(userId))) {
+            return res.status(400).json({ success: false, error: 'Invalid user ID format' });
+        }
+        
+        await pool.query('DELETE FROM favorites WHERE user_id = $1', [parseInt(userId)]);
         
         res.json({ success: true, message: 'All favorites cleared' });
     } catch (error) {
