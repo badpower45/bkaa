@@ -363,23 +363,37 @@ router.get('/admin/all', async (req, res) => {
     const { status, branchId } = req.query;
     
     try {
-        let sql = "SELECT * FROM orders WHERE 1=1";
+        let sql = `
+            SELECT 
+                o.*,
+                oa.status AS assignment_status,
+                oa.rejection_reason
+            FROM orders o
+            LEFT JOIN LATERAL (
+                SELECT status, rejection_reason
+                FROM order_assignments 
+                WHERE order_id = o.id
+                ORDER BY id DESC
+                LIMIT 1
+            ) oa ON TRUE
+            WHERE 1=1
+        `;
         const params = [];
         let paramIndex = 1;
         
         if (status) {
-            sql += ` AND status = $${paramIndex}`;
+            sql += ` AND o.status = $${paramIndex}`;
             params.push(status);
             paramIndex++;
         }
         
         if (branchId) {
-            sql += ` AND branch_id = $${paramIndex}`;
+            sql += ` AND o.branch_id = $${paramIndex}`;
             params.push(branchId);
             paramIndex++;
         }
         
-        sql += " ORDER BY date DESC";
+        sql += " ORDER BY o.date DESC";
         
         const { rows } = await query(sql, params);
         const orders = rows.map(o => ({
