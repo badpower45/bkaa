@@ -7,12 +7,21 @@ const router = express.Router();
 // Get all hot deals (public)
 router.get('/', async (req, res) => {
     try {
-        const { rows } = await query(`
-            SELECT * FROM hot_deals 
-            WHERE is_active = true 
-            AND end_time > NOW()
-            ORDER BY is_flash_deal DESC, sort_order ASC, created_at DESC
-        `);
+        const { brandId } = req.query;
+        let sql = `
+            SELECT hd.*, p.brand_id
+            FROM hot_deals hd
+            LEFT JOIN products p ON hd.product_id = p.id
+            WHERE hd.is_active = true 
+            AND hd.end_time > NOW()
+        `;
+        const params = [];
+        if (brandId) {
+            sql += ` AND p.brand_id = $1`;
+            params.push(brandId);
+        }
+        sql += ` ORDER BY hd.is_flash_deal DESC, hd.sort_order ASC, hd.created_at DESC`;
+        const { rows } = await query(sql, params);
         
         // Calculate remaining time and update sold percentage
         const deals = rows.map(deal => ({
