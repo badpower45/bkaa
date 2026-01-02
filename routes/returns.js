@@ -44,7 +44,12 @@ router.post('/create', verifyToken, async (req, res) => {
         const originalTotal = parseFloat(order.total || 0);
         
         // Calculate new total (after removing returned items)
-        const orderItems = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
+        let orderItems = [];
+        try {
+            orderItems = typeof order.items === 'string' ? JSON.parse(order.items) : Array.isArray(order.items) ? order.items : [];
+        } catch (e) {
+            return res.status(400).json({ error: 'تنسيق عناصر الطلب غير صالح' });
+        }
         const returnedItems = Array.isArray(items) ? items : [];
         
         let returnedItemsTotal = 0;
@@ -326,18 +331,12 @@ router.post('/admin/approve/:id', [verifyToken, isAdmin], async (req, res) => {
                     'SELECT loyalty_points FROM users WHERE id = $1 FOR UPDATE',
                     [returnData.user_id]
                 );
-                const currentBalance = userResult.rows[0]?.loyalty_points || 0;
+                const currentBalance = Math.max(0, userResult.rows[0]?.loyalty_points || 0);
+                const pointsToActuallyDeduct = Math.min(pointsToDeduct, currentBalance);
                 
-                // التحقق من رصيد النقاط
-                if (currentBalance < pointsToDeduct) {
-                    loyaltyStatus = 'insufficient_points';
-                    loyaltyMessage = `⚠️ العميل استفاد من نقاط الولاء. الرصيد الحالي: ${currentBalance}، المطلوب خصمه: ${pointsToDeduct}`;
-                    console.log(loyaltyMessage);
-                    // مش هنخصم لو مفيش رصيد كافي - معناه العميل استخدم النقاط
-                } else {
-                    // Deduct points
-                    const finalBalance = currentBalance - pointsToDeduct;
-                    pointsDeducted = pointsToDeduct;
+                if (pointsToActuallyDeduct > 0) {
+                    const finalBalance = currentBalance - pointsToActuallyDeduct;
+                    pointsDeducted = pointsToActuallyDeduct;
                     
                     await query(
                         'UPDATE users SET loyalty_points = $1 WHERE id = $2',
@@ -351,19 +350,26 @@ router.post('/admin/approve/:id', [verifyToken, isAdmin], async (req, res) => {
                         ) VALUES ($1, $2, 'deduct', $3, $4, $5)
                     `, [
                         returnData.user_id,
-                        -pointsToDeduct,
-                        `خصم نقاط - مبلغ الاسترجاع: ${pointsToDeduct} جنيه من الطلب #${returnData.order_id}`,
+                        -pointsToActuallyDeduct,
+                        `خصم نقاط - مبلغ الاسترجاع: ${returnData.refund_amount} جنيه من الطلب #${returnData.order_id}`,
                         returnData.order_id,
                         JSON.stringify({ 
                             return_id: id,
                             original_total: returnData.original_total || returnData.total_amount,
                             new_total: returnData.new_total,
                             refund_amount: returnData.refund_amount,
-                            points_deducted: pointsToDeduct
+                            points_deducted: pointsToActuallyDeduct,
+                            attempted_points_deduct: pointsToDeduct,
+                            balance_before: currentBalance,
+                            balance_after: finalBalance
                         })
                     ]);
                     
-                    loyaltyMessage = `✅ تم خصم ${pointsToDeduct} نقطة ولاء (مبلغ الاسترجاع: ${returnData.refund_amount} جنيه)`;
+                    loyaltyMessage = `✅ تم خصم ${pointsToActuallyDeduct} نقطة ولاء (مبلغ الاسترجاع: ${returnData.refund_amount} جنيه)`;
+                    console.log(loyaltyMessage);
+                } else {
+                    loyaltyStatus = 'insufficient_points';
+                    loyaltyMessage = `⚠️ لا يوجد رصيد نقاط كافٍ للخصم. الرصيد الحالي: ${currentBalance}`;
                     console.log(loyaltyMessage);
                 }
             } catch (pointsErr) {
@@ -387,9 +393,11 @@ router.post('/admin/approve/:id', [verifyToken, isAdmin], async (req, res) => {
                 returnId: id, 
                 status: 'approved',
                 stockRestored: true,
-                pointsDeducted: returnData.points_to_deduct
+                pointsDeducted: pointsDeducted,
+                loyaltyStatus,
+                loyaltyMessage
             },
-            message: 'Return approved successfully. Stock restored and points deducted.' 
+            message: 'Return approved successfully. Stock restored and loyalty handled.' 
         });
     } catch (err) {
         await query('ROLLBACK');
