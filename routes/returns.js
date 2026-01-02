@@ -282,27 +282,38 @@ router.post('/admin/approve/:id', [verifyToken, isAdmin], async (req, res) => {
         }
         
         // Parse order items
-        const orderItems = typeof returnData.items === 'string' 
-            ? JSON.parse(returnData.items) 
-            : returnData.items;
+        let orderItems = [];
+        try {
+            orderItems = typeof returnData.items === 'string' 
+                ? JSON.parse(returnData.items) 
+                : Array.isArray(returnData.items) ? returnData.items : [];
+        } catch (e) {
+            console.error('Failed to parse return items, falling back to empty list', e);
+            orderItems = [];
+        }
         
         // RESTORE STOCK TO INVENTORY
-        console.log(`Restoring stock for return #${id}...`);
-        for (const item of orderItems) {
-            const productId = item.id || item.productId || item.product_id;
-            const quantity = item.quantity || 1;
-            
-            try {
-                await query(`
-                    UPDATE branch_products 
-                    SET stock_quantity = stock_quantity + $1
-                    WHERE branch_id = $2 AND product_id = $3
-                `, [quantity, returnData.branch_id, productId]);
+        if (orderItems.length === 0) {
+            console.warn(`⚠️ No items to restore for return #${id}`);
+        } else {
+            console.log(`Restoring stock for return #${id}...`);
+            for (const item of orderItems) {
+                const productId = item.id || item.productId || item.product_id;
+                const quantity = Number(item.quantity || 0);
+                if (!productId || quantity <= 0) continue;
                 
-                console.log(`✅ Restored ${quantity}x product ${productId} to branch ${returnData.branch_id}`);
-            } catch (stockErr) {
-                console.error(`Failed to restore stock for product ${productId}:`, stockErr);
-                // Continue anyway - don't block return
+                try {
+                    await query(`
+                        UPDATE branch_products 
+                        SET stock_quantity = stock_quantity + $1
+                        WHERE branch_id = $2 AND product_id = $3
+                    `, [quantity, returnData.branch_id, productId]);
+                    
+                    console.log(`✅ Restored ${quantity}x product ${productId} to branch ${returnData.branch_id}`);
+                } catch (stockErr) {
+                    console.error(`Failed to restore stock for product ${productId}:`, stockErr);
+                    // Continue anyway - don't block return
+                }
             }
         }
         
