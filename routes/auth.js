@@ -103,6 +103,10 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 
         if (!user) return res.status(404).send('No user found.');
 
+        if (user.is_blocked) {
+            return res.status(403).json({ error: 'تم حظر هذا الحساب. يرجى التواصل مع الدعم.' });
+        }
+
         const storedPassword = user.password || '';
         const isHashed = storedPassword.startsWith('$2');
         let passwordIsValid = false;

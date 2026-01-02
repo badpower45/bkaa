@@ -315,6 +315,61 @@ router.put('/:id/loyalty-points', [verifyToken, isAdmin], async (req, res) => {
     }
 });
 
+// Block user by email (Admin)
+router.post('/block-email', [verifyToken, isAdmin], async (req, res) => {
+    const { email, reason } = req.body;
+    if (!email) {
+        return res.status(400).json({ error: 'البريد الإلكتروني مطلوب' });
+    }
+
+    try {
+        const adminId = req.user?.id || req.userId;
+        const { rows } = await query(
+            `UPDATE users 
+             SET is_blocked = TRUE, block_reason = $2, blocked_at = NOW(), blocked_by = $3 
+             WHERE LOWER(email) = LOWER($1) 
+             RETURNING id, email, is_blocked, block_reason, blocked_at`,
+            [email, reason || null, adminId || null]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'الحساب غير موجود' });
+        }
+
+        res.json({ message: 'تم حظر المستخدم', data: rows[0] });
+    } catch (err) {
+        console.error('Error blocking user:', err);
+        res.status(500).json({ error: 'تعذر حظر المستخدم' });
+    }
+});
+
+// Unblock user by email (Admin)
+router.post('/unblock-email', [verifyToken, isAdmin], async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+        return res.status(400).json({ error: 'البريد الإلكتروني مطلوب' });
+    }
+
+    try {
+        const { rows } = await query(
+            `UPDATE users 
+             SET is_blocked = FALSE, block_reason = NULL, blocked_at = NULL, blocked_by = NULL 
+             WHERE LOWER(email) = LOWER($1) 
+             RETURNING id, email, is_blocked`,
+            [email]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'الحساب غير موجود' });
+        }
+
+        res.json({ message: 'تم إلغاء الحظر', data: rows[0] });
+    } catch (err) {
+        console.error('Error unblocking user:', err);
+        res.status(500).json({ error: 'تعذر إلغاء الحظر' });
+    }
+});
+
 // Delete User
 router.delete('/:id', [verifyToken, isAdmin], async (req, res) => {
     try {
