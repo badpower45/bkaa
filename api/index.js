@@ -820,12 +820,30 @@ app.delete('/api/cart', verifyToken, async (req, res) => {
 
 // Get all users (admin)
 app.get('/api/admin/users', verifyToken, async (req, res) => {
-    if (req.userRole !== 'admin') return res.status(403).json({ error: 'Admin only' });
+    if (req.userRole !== 'admin' && req.userRole !== 'manager') {
+        return res.status(403).json({ error: 'Admin only' });
+    }
+    
     try {
-        const { rows } = await query('SELECT id, name, email, role, phone, created_at FROM users ORDER BY created_at DESC');
-        res.json(rows);
+        const { rows } = await query(
+            `SELECT 
+                id, name, email, role, phone, phone2,
+                assigned_branch_id, created_at, is_blocked,
+                email_verified, loyalty_points
+             FROM users 
+             ORDER BY created_at DESC`
+        );
+        
+        console.log(`📋 Loaded ${rows.length} users for admin`);
+        
+        // Return in format expected by frontend
+        res.json({ 
+            success: true,
+            data: rows 
+        });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to fetch users' });
+        console.error('❌ Error fetching users:', err);
+        res.status(500).json({ error: 'Failed to fetch users', details: err.message });
     }
 });
 
