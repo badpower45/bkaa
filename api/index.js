@@ -64,18 +64,18 @@ pool.on('error', (err, client) => {
     }
 })();
 
-// Middleware
+// Middleware - CORS configuration
 app.use(cors({
-    origin: [
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'https://newnewoo.vercel.app',
-        'https://allosh-eg.com',
-        'https://www.allosh-eg.com',
-        ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(u => u.trim()) : [])
-    ].filter(Boolean),
-    credentials: true
+    origin: '*', // Allow all origins for now
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'apikey'],
+    exposedHeaders: ['Content-Length', 'Content-Type']
 }));
+
+// Handle preflight requests
+app.options('*', cors());
+
 app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET;
