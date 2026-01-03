@@ -78,6 +78,9 @@ app.options('*', cors());
 
 app.use(express.json());
 
+const JWT_SECRET = process.env.JWT_SECRET || 'allosh-supermarket-secret-key-2026-production';
+console.log('🔐 JWT_SECRET configured:', JWT_SECRET ? '✅ Present' : '❌ Missing');
+
 // JWT Configuration - Use a fixed secret if env var missing
 const JWT_SECRET = process.env.JWT_SECRET || 'allosh-supermarket-secret-key-2026-production';
 
@@ -121,18 +124,31 @@ const query = async (text, params, retries = 3) => {
     }
 };
 
-// Auth middleware
+// Auth middleware - Enhanced with better error handling
 const verifyToken = (req, res, next) => {
-    const token = req.headers['authorization']?.split(' ')[1];
-    if (!token) return res.status(403).json({ error: 'No token provided' });
+    const authHeader = req.headers['authorization'];
     
+    if (!authHeader) {
+        console.log('❌ No authorization header');
+        return res.status(403).json({ auth: false, message: 'No token provided.' });
+    }
+    
+    const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
+    
+    if (!token || token === 'null' || token === 'undefined') {
+        console.log('❌ Invalid token value:', token);
+        return res.status(403).json({ auth: false, message: 'No token provided.' });
+    }
+
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
         req.userId = decoded.id;
-        req.userRole = decoded.role;
+        req.userRole = decoded.role || 'customer';
+        console.log('✅ Token verified for user:', decoded.id, 'role:', req.userRole);
         next();
     } catch (err) {
-        return res.status(401).json({ error: 'Invalid token' });
+        console.error('❌ Token verification failed:', err.message);
+        return res.status(401).json({ auth: false, message: 'Failed to authenticate token.', error: err.message });
     }
 };
 
