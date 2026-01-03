@@ -1324,6 +1324,57 @@ app.get('/', (req, res) => {
     res.json({ message: 'Allosh Fresh Market API', version: '1.0.0', status: 'running' });
 });
 
+// ===================== ADMIN SETUP ENDPOINT (TEMPORARY) =====================
+// This endpoint creates an admin user - REMOVE IN PRODUCTION
+app.post('/api/setup-admin', async (req, res) => {
+    try {
+        const adminEmail = 'admin@allosh.com';
+        const adminPassword = 'admin123456';
+        const hashedPassword = bcrypt.hashSync(adminPassword, 8);
+
+        // Check if admin exists
+        const { rows: existing } = await query(
+            'SELECT id, email, role FROM users WHERE email = $1',
+            [adminEmail]
+        );
+
+        if (existing.length > 0) {
+            // Update existing user to admin
+            await query(
+                'UPDATE users SET role = $1, password = $2 WHERE email = $3',
+                ['admin', hashedPassword, adminEmail]
+            );
+            return res.json({
+                success: true,
+                message: 'Admin user updated',
+                email: adminEmail,
+                password: adminPassword,
+                note: 'User already existed, role updated to admin'
+            });
+        }
+
+        // Create new admin
+        const { rows } = await query(
+            `INSERT INTO users (name, email, password, phone, role, loyalty_points, created_at)
+             VALUES ($1, $2, $3, $4, $5, 0, NOW())
+             RETURNING id, email, role`,
+            ['Admin Allosh', adminEmail, hashedPassword, '01000000000', 'admin']
+        );
+
+        res.json({
+            success: true,
+            message: 'Admin user created successfully',
+            email: adminEmail,
+            password: adminPassword,
+            userId: rows[0].id,
+            warning: 'CHANGE PASSWORD AFTER FIRST LOGIN!'
+        });
+    } catch (err) {
+        console.error('Setup admin error:', err);
+        res.status(500).json({ error: 'Failed to create admin', details: err.message });
+    }
+});
+
 // 404 handler
 app.use((req, res) => {
     res.status(404).json({ error: 'Endpoint not found', path: req.path });
