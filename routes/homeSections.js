@@ -281,4 +281,108 @@ router.post('/reorder', async (req, res) => {
     }
 });
 
+// ============================================
+// UPDATE Home Sections (Recreate all based on available categories)
+// ============================================
+router.post('/reset', async (req, res) => {
+    try {
+        console.log('🔄 Resetting home sections...');
+        
+        // 1. Get available categories with product counts
+        const categoriesResult = await query(`
+            SELECT DISTINCT p.category, COUNT(DISTINCT p.id) as product_count
+            FROM products p
+            INNER JOIN branch_products bp ON p.id = bp.product_id
+            WHERE bp.is_available = true 
+            AND bp.branch_id = 1
+            AND p.category IS NOT NULL
+            AND p.category != ''
+            AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
+            GROUP BY p.category
+            HAVING COUNT(DISTINCT p.id) >= 2
+            ORDER BY COUNT(DISTINCT p.id) DESC
+        `);
+        
+        const categories = categoriesResult.rows;
+        console.log(`Found ${categories.length} categories with products`);
+        
+        if (categories.length === 0) {
+            return res.status(400).json({ error: 'No categories with products found' });
+        }
+        
+        // 2. Delete old sections
+        await query('DELETE FROM home_sections');
+        console.log('Deleted old sections');
+        
+        // 3. Category mapping for names and images
+        const categoryMap = {
+            'مشروبات': { en: 'Beverages', img: 'https://images.unsplash.com/photo-1437418747212-8d9709afab22?w=1200&h=400&fit=crop' },
+            'مشرويات ساخنة': { en: 'Hot Beverages', img: 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=1200&h=400&fit=crop' },
+            'حلويات': { en: 'Sweets', img: 'https://images.unsplash.com/photo-1514517521153-1be72277b32f?w=1200&h=400&fit=crop' },
+            'حلويات ': { en: 'Sweets', img: 'https://images.unsplash.com/photo-1514517521153-1be72277b32f?w=1200&h=400&fit=crop' },
+            'كاندي': { en: 'Candy', img: 'https://images.unsplash.com/photo-1582058091505-f87a2e55a40f?w=1200&h=400&fit=crop' },
+            'شيكولاتة': { en: 'Chocolate', img: 'https://images.unsplash.com/photo-1511381939415-e44015466834?w=1200&h=400&fit=crop' },
+            'بسكويتات': { en: 'Biscuits', img: 'https://images.unsplash.com/photo-1558961363-fa8fdf82db35?w=1200&h=400&fit=crop' },
+            'ألبان': { en: 'Dairy', img: 'https://images.unsplash.com/photo-1628088062854-d1870b4553da?w=1200&h=400&fit=crop' },
+            'البان ': { en: 'Dairy Products', img: 'https://images.unsplash.com/photo-1628088062854-d1870b4553da?w=1200&h=400&fit=crop' },
+            'Dairy': { en: 'Dairy', img: 'https://images.unsplash.com/photo-1628088062854-d1870b4553da?w=1200&h=400&fit=crop' },
+            'جبن': { en: 'Cheese', img: 'https://images.unsplash.com/photo-1486297678162-eb2a19b0a32d?w=1200&h=400&fit=crop' },
+            'مجمدات': { en: 'Frozen Foods', img: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=1200&h=400&fit=crop' },
+            'سناكس': { en: 'Snacks', img: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=1200&h=400&fit=crop' },
+            'Snacks': { en: 'Snacks', img: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=1200&h=400&fit=crop' },
+            'صحي': { en: 'Healthy Products', img: 'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=1200&h=400&fit=crop' },
+            'منتجات صحيه': { en: 'Health Products', img: 'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=1200&h=400&fit=crop' },
+            'تجميل': { en: 'Beauty & Care', img: 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?w=1200&h=400&fit=crop' },
+            'Bakery': { en: 'Bakery', img: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=1200&h=400&fit=crop' },
+            'Vegetables': { en: 'Fresh Vegetables', img: 'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=1200&h=400&fit=crop' },
+            'بقالة': { en: 'Groceries', img: 'https://images.unsplash.com/photo-1553531087-1e6fa5ca4804?w=1200&h=400&fit=crop' },
+            'مكرونات ': { en: 'Pasta', img: 'https://images.unsplash.com/photo-1621996346565-e3dbc646d9a9?w=1200&h=400&fit=crop' }
+        };
+        
+        // 4. Create new sections
+        const createdSections = [];
+        let order = 1;
+        
+        for (const cat of categories) {
+            const info = categoryMap[cat.category] || { 
+                en: cat.category, 
+                img: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=1200&h=400&fit=crop' 
+            };
+            
+            const result = await query(`
+                INSERT INTO home_sections (
+                    section_name, section_name_ar, banner_image, category,
+                    display_order, max_products, is_active
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING *
+            `, [
+                info.en,
+                cat.category,
+                info.img,
+                cat.category,
+                order++,
+                8,
+                true
+            ]);
+            
+            createdSections.push({
+                ...result.rows[0],
+                product_count: cat.product_count
+            });
+            
+            console.log(`✅ Created: ${cat.category} (${cat.product_count} products)`);
+        }
+        
+        res.json({ 
+            message: `Successfully created ${createdSections.length} home sections`,
+            sections: createdSections
+        });
+        
+    } catch (error) {
+        console.error('Error resetting home sections:', error);
+        res.status(500).json({ error: 'Failed to reset home sections', details: error.message });
+    }
+});
+
 export default router;
