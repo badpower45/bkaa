@@ -870,6 +870,138 @@ app.get('/api/admin/stats', verifyToken, async (req, res) => {
     }
 });
 
+// ===================== CUSTOMER ANALYTICS ROUTES =====================
+
+// Get customer analytics with filtering and sorting
+app.get('/api/admin/customer-analytics', verifyToken, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ error: 'Admin only' });
+    
+    try {
+        const { search, rating, sortBy, limit = 200 } = req.query;
+        
+        let sql = `
+            SELECT 
+                u.id,
+                u.name,
+                u.email,
+                u.phone,
+                u.is_blocked,
+                COUNT(DISTINCT o.id) as total_orders,
+                COUNT(DISTINCT CASE WHEN o.status = 'cancelled' THEN o.id END) as rejected_orders,
+                COUNT(DISTINCT CASE WHEN o.status = 'delivered' THEN o.id END) as completed_orders,
+                COALESCE(SUM(CASE WHEN o.status = 'delivered' THEN o.total ELSE 0 END), 0) as total_spent,
+                COALESCE(AVG(CASE WHEN o.status = 'delivered' THEN o.total END), 0) as average_order_value,
+                MAX(o.created_at) as last_order_date,
+                CASE 
+                    WHEN u.is_blocked = true THEN 'banned'
+                    WHEN COUNT(DISTINCT CASE WHEN o.status = 'cancelled' THEN o.id END) >= 3 THEN 'problematic'
+                    WHEN COALESCE(SUM(CASE WHEN o.status = 'delivered' THEN o.total ELSE 0 END), 0) >= 1000 THEN 'excellent'
+                    ELSE 'good'
+                END as customer_rating
+            FROM users u
+            LEFT JOIN orders o ON o.user_id = u.id
+            WHERE u.role = 'user'
+        `;
+        
+        const params = [];
+        
+        // Search filter
+        if (search) {
+            params.push(`%${search}%`);
+            sql += ` AND (u.name ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.phone ILIKE $${params.length})`;
+        }
+        
+        sql += ' GROUP BY u.id, u.name, u.email, u.phone, u.is_blocked';
+        
+        // Rating filter (applied after GROUP BY using HAVING)
+        if (rating && rating !== 'all') {
+            if (rating === 'excellent') {
+                sql += ' HAVING COALESCE(SUM(CASE WHEN o.status = \'delivered\' THEN o.total ELSE 0 END), 0) >= 1000';
+            } else if (rating === 'good') {
+                sql += ' HAVING COALESCE(SUM(CASE WHEN o.status = \'delivered\' THEN o.total ELSE 0 END), 0) < 1000 AND COUNT(DISTINCT CASE WHEN o.status = \'cancelled\' THEN o.id END) < 3 AND u.is_blocked = false';
+            } else if (rating === 'problematic') {
+                sql += ' HAVING COUNT(DISTINCT CASE WHEN o.status = \'cancelled\' THEN o.id END) >= 3 AND u.is_blocked = false';
+            } else if (rating === 'banned') {
+                sql += ' HAVING u.is_blocked = true';
+            }
+        }
+        
+        // Sorting
+        if (sortBy === 'rejected') {
+            sql += ' ORDER BY rejected_orders DESC, total_orders DESC';
+        } else if (sortBy === 'spent') {
+            sql += ' ORDER BY total_spent DESC';
+        } else if (sortBy === 'orders') {
+            sql += ' ORDER BY total_orders DESC';
+        } else if (sortBy === 'recent') {
+            sql += ' ORDER BY last_order_date DESC NULLS LAST';
+        } else {
+            sql += ' ORDER BY total_orders DESC';
+        }
+        
+        params.push(parseInt(limit));
+        sql += ` LIMIT $${params.length}`;
+        
+        const { rows } = await query(sql, params);
+        
+        // Format the response
+        const formattedRows = rows.map(row => ({
+            ...row,
+            total_spent: parseFloat(row.total_spent || 0),
+            average_order_value: parseFloat(row.average_order_value || 0),
+            total_orders: parseInt(row.total_orders || 0),
+            rejected_orders: parseInt(row.rejected_orders || 0),
+            completed_orders: parseInt(row.completed_orders || 0)
+        }));
+        
+        res.json({ data: formattedRows });
+    } catch (err) {
+        console.error('Customer analytics error:', err);
+        res.status(500).json({ error: 'Failed to fetch customer analytics', details: err.message });
+    }
+});
+
+// Get customer analytics stats summary
+app.get('/api/admin/customer-analytics/stats', verifyToken, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ error: 'Admin only' });
+    
+    try {
+        const statsQuery = `
+            SELECT 
+                COUNT(DISTINCT u.id) as total_customers,
+                COUNT(DISTINCT CASE WHEN u.is_blocked = true THEN u.id END) as blocked_customers,
+                COUNT(DISTINCT CASE 
+                    WHEN u.is_blocked = false 
+                    AND (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.status = 'cancelled') >= 3 
+                    THEN u.id 
+                END) as problematic_customers,
+                COUNT(DISTINCT CASE 
+                    WHEN (SELECT COALESCE(SUM(o.total), 0) FROM orders o WHERE o.user_id = u.id AND o.status = 'delivered') >= 1000 
+                    THEN u.id 
+                END) as excellent_customers,
+                COALESCE(AVG((SELECT SUM(o.total) FROM orders o WHERE o.user_id = u.id AND o.status = 'delivered')), 0) as avg_customer_lifetime_value
+            FROM users u
+            WHERE u.role = 'user'
+        `;
+        
+        const { rows } = await query(statsQuery);
+        const stats = rows[0];
+        
+        res.json({
+            data: {
+                total_customers: parseInt(stats.total_customers || 0),
+                blocked_customers: parseInt(stats.blocked_customers || 0),
+                problematic_customers: parseInt(stats.problematic_customers || 0),
+                excellent_customers: parseInt(stats.excellent_customers || 0),
+                avg_customer_lifetime_value: parseFloat(stats.avg_customer_lifetime_value || 0)
+            }
+        });
+    } catch (err) {
+        console.error('Customer analytics stats error:', err);
+        res.status(500).json({ error: 'Failed to fetch customer analytics stats', details: err.message });
+    }
+});
+
 // ===================== SEARCH =====================
 
 app.get('/api/search', async (req, res) => {
