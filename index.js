@@ -160,6 +160,28 @@ app.use((req, res, next) => {
     next();
 });
 
+// Backward compatibility middleware - redirect old routes without /api prefix
+app.use((req, res, next) => {
+    const routesToRewrite = [
+        '/auth', '/products', '/cart', '/orders', '/users', '/chat',
+        '/branches', '/distribution', '/delivery-fees', '/coupons',
+        '/magazine', '/hot-deals', '/favorites', '/stories', '/categories',
+        '/facebook-reels', '/brand-offers', '/home-sections', '/addresses',
+        '/loyalty', '/brands', '/returns', '/notifications', '/admin',
+        '/inventory', '/excel', '/location', '/order-cancellation', '/reviews',
+        '/hero-sections', '/upload'
+    ];
+    
+    const path = req.path;
+    for (const route of routesToRewrite) {
+        if (path.startsWith(route + '/') || path === route) {
+            req.url = '/api' + req.url;
+            break;
+        }
+    }
+    next();
+});
+
 // Initialize Socket.io
 initializeSocket(io);
 
