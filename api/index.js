@@ -138,6 +138,20 @@ const verifyToken = (req, res, next) => {
 // Register
 app.post('/api/auth/register', async (req, res) => {
     const { name, email, password, phone } = req.body;
+
+    // Validation
+    if (!name || !email || !password) {
+        return res.status(400).json({ error: 'Name, email and password are required' });
+    }
+
+    if (typeof name !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
+        return res.status(400).json({ error: 'Invalid input format' });
+    }
+
+    if (password.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
     const hashedPassword = bcrypt.hashSync(password, 8);
 
     try {
@@ -157,6 +171,15 @@ app.post('/api/auth/register', async (req, res) => {
 // Login
 app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
+
+    // Validation
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    if (typeof email !== 'string' || typeof password !== 'string') {
+        return res.status(400).json({ error: 'Invalid email or password format' });
+    }
 
     try {
         const { rows } = await query('SELECT * FROM users WHERE email = $1', [email]);
