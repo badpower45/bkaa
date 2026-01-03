@@ -257,7 +257,7 @@ export const orderSchema = Joi.object({
     shippingDetails: Joi.object({
         firstName: Joi.string().max(50).optional().allow('', null),
         lastName: Joi.string().max(50).optional().allow('', null),
-        phone: Joi.string().pattern(/^[0-9+]{10,15}$/).optional().allow('', null),
+        phone: Joi.string().max(15).optional().allow('', null),
         address: Joi.string().max(500).optional().allow('', null),
         city: Joi.string().max(100).optional().allow('', null),
         area: Joi.string().max(100).optional().allow('', null),
@@ -275,7 +275,13 @@ export const orderSchema = Joi.object({
     deliveryAddress: Joi.string().max(500).allow(null, ''),
     couponId: Joi.number().integer().positive().allow(null),
     couponCode: Joi.string().max(50).allow(null, ''),
-    couponDiscount: Joi.number().min(0).max(1000000).allow(null)
+    couponDiscount: Joi.number().min(0).max(1000000).allow(null),
+    googleMapsLink: Joi.string().uri().max(1000).allow(null, ''),
+    deliveryLatitude: Joi.number().min(-90).max(90).allow(null),
+    deliveryLongitude: Joi.number().min(-180).max(180).allow(null),
+    barcodeCode: Joi.string().max(100).allow(null, ''),
+    barcodeId: Joi.number().integer().positive().allow(null),
+    barcodeDiscount: Joi.number().min(0).max(1000000).allow(null)
 });
 
 // Cart Item Schema
