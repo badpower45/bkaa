@@ -78,12 +78,8 @@ app.options('*', cors());
 
 app.use(express.json());
 
-const JWT_SECRET = process.env.JWT_SECRET || 'allosh-supermarket-secret-key-2026-production';
-console.log('🔐 JWT_SECRET configured:', JWT_SECRET ? '✅ Present' : '❌ Missing');
-
 // JWT Configuration - Use a fixed secret if env var missing
 const JWT_SECRET = process.env.JWT_SECRET || 'allosh-supermarket-secret-key-2026-production';
-
 console.log('🔐 JWT_SECRET configured:', JWT_SECRET ? '✅ Present' : '❌ Missing');
 
 // Helper with retry logic
@@ -1562,6 +1558,37 @@ app.post('/api/setup-admin', async (req, res) => {
     } catch (err) {
         console.error('Setup admin error:', err);
         res.status(500).json({ error: 'Failed to create admin', details: err.message });
+    }
+});
+
+// Reset admin password (for debugging)
+app.post('/api/reset-admin-password', async (req, res) => {
+    try {
+        const password = 'admin123456';
+        const hashedPassword = bcrypt.hashSync(password, 8);
+        
+        const { rows } = await query(
+            `UPDATE users 
+             SET password = $1 
+             WHERE email = 'admin@allosh.com' 
+             RETURNING id, email, name, role`,
+            [hashedPassword]
+        );
+        
+        if (rows[0]) {
+            console.log('✅ Admin password reset successfully');
+            res.json({ 
+                success: true, 
+                message: 'Admin password reset to: admin123456',
+                user: rows[0],
+                hash: hashedPassword
+            });
+        } else {
+            res.status(404).json({ error: 'Admin user not found' });
+        }
+    } catch (err) {
+        console.error('❌ Error resetting admin password:', err);
+        res.status(500).json({ error: 'Failed to reset password', details: err.message });
     }
 });
 
