@@ -78,7 +78,10 @@ app.options('*', cors());
 
 app.use(express.json());
 
-const JWT_SECRET = process.env.JWT_SECRET;
+// JWT Configuration - Use a fixed secret if env var missing
+const JWT_SECRET = process.env.JWT_SECRET || 'allosh-supermarket-secret-key-2026-production';
+
+console.log('🔐 JWT_SECRET configured:', JWT_SECRET ? '✅ Present' : '❌ Missing');
 
 // Helper with retry logic
 const query = async (text, params, retries = 3) => {
@@ -168,36 +171,75 @@ app.post('/api/auth/register', async (req, res) => {
     }
 });
 
-// Login
+// Login - Enhanced with better token generation
 app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
+    
+    console.log('🔐 Login attempt for:', email);
 
     // Validation
     if (!email || !password) {
-        return res.status(400).json({ error: 'Email and password are required' });
+        return res.status(400).json({ auth: false, error: 'Email and password are required' });
     }
 
     if (typeof email !== 'string' || typeof password !== 'string') {
-        return res.status(400).json({ error: 'Invalid email or password format' });
+        return res.status(400).json({ auth: false, error: 'Invalid email or password format' });
     }
 
     try {
-        const { rows } = await query('SELECT * FROM users WHERE email = $1', [email]);
-        if (!rows[0]) return res.status(404).json({ error: 'User not found' });
-
-        if (!bcrypt.compareSync(password, rows[0].password)) {
-            return res.status(401).json({ error: 'Invalid password' });
+        const { rows } = await query('SELECT * FROM users WHERE email = $1', [email.toLowerCase().trim()]);
+        
+        if (!rows[0]) {
+            console.log('❌ User not found:', email);
+            return res.status(401).json({ auth: false, error: 'Invalid email or password' });
         }
 
-        const token = jwt.sign({ id: rows[0].id, role: rows[0].role }, JWT_SECRET, { expiresIn: '24h' });
+        const user = rows[0];
+
+        // Check if user is blocked
+        if (user.is_blocked) {
+            console.log('❌ User is blocked:', email);
+            return res.status(403).json({ auth: false, error: 'Account is blocked' });
+        }
+
+        // Verify password
+        const passwordMatch = bcrypt.compareSync(password, user.password);
+        if (!passwordMatch) {
+            console.log('❌ Invalid password for:', email);
+            return res.status(401).json({ auth: false, error: 'Invalid email or password' });
+        }
+
+        // Generate token with proper payload
+        const tokenPayload = { 
+            id: user.id, 
+            role: user.role || 'customer',
+            email: user.email,
+            iat: Math.floor(Date.now() / 1000)
+        };
+        
+        const token = jwt.sign(tokenPayload, JWT_SECRET, { 
+            expiresIn: '30d',
+            algorithm: 'HS256'
+        });
+        
+        console.log('✅ Login successful for:', email, 'role:', user.role);
+        console.log('✅ Token generated:', token.substring(0, 20) + '...');
+
         res.json({
             auth: true,
-            token,
-            user: { id: rows[0].id, name: rows[0].name, email: rows[0].email, role: rows[0].role, phone: rows[0].phone }
+            token: token,
+            user: { 
+                id: user.id, 
+                name: user.name, 
+                email: user.email, 
+                role: user.role || 'customer',
+                phone: user.phone,
+                email_verified: user.email_verified
+            }
         });
     } catch (err) {
-        console.error('Login error:', err);
-        res.status(500).json({ error: 'Login failed' });
+        console.error('❌ Login error:', err);
+        res.status(500).json({ auth: false, error: 'Login failed', details: err.message });
     }
 });
 
