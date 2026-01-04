@@ -522,126 +522,116 @@ router.put('/:id/status', [verifyToken, isAdmin], async (req, res) => {
         }
 
         const order = orderRows[0];
+        const oldStatus = order.status;
+        const newStatus = status;
         const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
 
-        // If moving from pending to confirmed/preparing: deduct from stock but keep reserved
-        // (Stock was already reserved when order was created)
-        const activeStatuses = ['confirmed', 'preparing'];
-        if (activeStatuses.includes(status) && order.status === 'pending') {
+        console.log(`🔄 Order #${orderId} status transition: ${oldStatus} → ${newStatus}`);
+
+        // ========================================
+        // INVENTORY MANAGEMENT (Unified Logic)
+        // ========================================
+
+        // 1. From Pending to Active (confirmed/preparing): Deduct stock and release reservation
+        if (['confirmed', 'preparing'].includes(newStatus) && oldStatus === 'pending') {
+            console.log(`📦 Activating order: Deducting stock and releasing reservation`);
             for (const item of items) {
-                // Deduct from stock_quantity, release from reserved
+                const productId = item.id || item.productId;
                 await query(
                     `UPDATE branch_products 
                      SET stock_quantity = stock_quantity - $1,
                          reserved_quantity = GREATEST(reserved_quantity - $1, 0)
                      WHERE branch_id = $2 AND product_id = $3`,
-                    [item.quantity, order.branch_id, item.id || item.productId]
+                    [item.quantity, order.branch_id, productId]
                 );
             }
+            console.log(`✅ Stock deducted for ${items.length} items`);
         }
 
-        // If cancelling order from pending: release reserved inventory only
-        if (status === 'cancelled' && order.status === 'pending') {
+        // 2. Cancel from Pending: Release reservation only
+        if (newStatus === 'cancelled' && oldStatus === 'pending') {
+            console.log(`🚫 Cancelling pending order: Releasing reservation`);
             for (const item of items) {
+                const productId = item.id || item.productId;
                 await query(
-                    "UPDATE branch_products SET reserved_quantity = GREATEST(reserved_quantity - $1, 0) WHERE branch_id = $2 AND product_id = $3",
-                    [item.quantity, order.branch_id, item.id || item.productId]
+                    `UPDATE branch_products 
+                     SET reserved_quantity = GREATEST(reserved_quantity - $1, 0) 
+                     WHERE branch_id = $2 AND product_id = $3`,
+                    [item.quantity, order.branch_id, productId]
                 );
             }
-
+            
             // Release delivery slot
             if (order.delivery_slot_id) {
                 await query(
                     "UPDATE delivery_slots SET current_orders = GREATEST(current_orders - 1, 0) WHERE id = $1",
                     [order.delivery_slot_id]
                 );
+                console.log(`✅ Delivery slot released`);
             }
+            console.log(`✅ Reservation released for ${items.length} items`);
         }
 
-        // If cancelling order from confirmed/delivered: return stock
-        if (status === 'cancelled' && (order.status === 'confirmed' || order.status === 'delivered')) {
+        // 3. Restocking: Return items when order is cancelled/returned from active states
+        if (['returned', 'cancelled'].includes(newStatus) && 
+            ['confirmed', 'preparing', 'delivered'].includes(oldStatus)) {
+            console.log(`📦 Restocking: Returning items to inventory (from ${oldStatus})`);
             for (const item of items) {
-                await query(
-                    "UPDATE branch_products SET stock_quantity = stock_quantity + $1 WHERE branch_id = $2 AND product_id = $3",
-                    [item.quantity, order.branch_id, item.id || item.productId]
-                );
-            }
-        }
-
-        // If returning order: return stock to warehouse
-        if (status === 'returned' && order.status === 'delivered') {
-            for (const item of items) {
+                const productId = item.id || item.productId;
                 await query(
                     `UPDATE branch_products 
                      SET stock_quantity = stock_quantity + $1
                      WHERE branch_id = $2 AND product_id = $3`,
-                    [item.quantity, order.branch_id, item.id || item.productId]
+                    [item.quantity, order.branch_id, productId]
                 );
             }
-            console.log(`📦 Returned ${items.length} items to stock for order ${orderId}`);
+            console.log(`✅ Stock returned for ${items.length} items`);
         }
 
-        // Award Loyalty Points ONLY when order is delivered
-        if (status === 'delivered' && order.status !== 'delivered') {
+        // ========================================
+        // LOYALTY POINTS MANAGEMENT (Prevent Double Action)
+        // ========================================
+
+        // 1. Award Points: Only when delivering for the first time
+        if (newStatus === 'delivered' && oldStatus !== 'delivered') {
             const points = Math.floor(Number(order.total) || 0);
+            
             if (points > 0 && order.user_id) {
-                // Update user's loyalty points
                 await query(
                     "UPDATE users SET loyalty_points = COALESCE(loyalty_points, 0) + $1 WHERE id = $2",
                     [points, order.user_id]
                 );
                 
-                // Create loyalty points history record
                 await query(
                     `INSERT INTO loyalty_points_history (user_id, order_id, points, type, description)
-                    VALUES ($1, $2, $3, 'earned', $4)`,
+                     VALUES ($1, $2, $3, 'earned', $4)`,
                     [order.user_id, orderId, points, `نقاط من طلب رقم ${orderId}`]
                 );
                 
-                console.log(`✅ Awarded ${points} loyalty points to user ${order.user_id} for order ${orderId}`);
+                console.log(`✅ Awarded ${points} loyalty points to user ${order.user_id} (Order delivered)`);
             }
         }
 
-        // Deduct Loyalty Points when order is returned or cancelled (if was delivered before)
-        console.log(`🔍 Checking loyalty deduction: newStatus=${status}, oldStatus=${order.status}, total=${order.total}, userId=${order.user_id}`);
-        
-        if ((status === 'returned' || status === 'cancelled') && order.status === 'delivered') {
+        // 2. Deduct Points: ONLY when returning/cancelling a DELIVERED order (Prevent Double Deduction)
+        if (['returned', 'cancelled'].includes(newStatus) && oldStatus === 'delivered') {
             const points = Math.floor(Number(order.total) || 0);
-            console.log(`🔍 Deduction condition MET! Points to deduct: ${points}`);
             
             if (points > 0 && order.user_id) {
-                try {
-                    // Get current points before deduction
-                    const { rows: userRows } = await query("SELECT loyalty_points FROM users WHERE id = $1", [order.user_id]);
-                    const currentPoints = userRows[0]?.loyalty_points || 0;
-                    console.log(`🔍 User ${order.user_id} current points: ${currentPoints}`);
-                    
-                    // Deduct points from user
-                    const updateResult = await query(
-                        "UPDATE users SET loyalty_points = GREATEST(COALESCE(loyalty_points, 0) - $1, 0) WHERE id = $2 RETURNING loyalty_points",
-                        [points, order.user_id]
-                    );
-                    
-                    const newPoints = updateResult.rows[0]?.loyalty_points;
-                    console.log(`✅ Points updated from ${currentPoints} to ${newPoints}`);
-                    
-                    // Create loyalty points history record
-                    await query(
-                        `INSERT INTO loyalty_points_history (user_id, order_id, points, type, description)
-                        VALUES ($1, $2, $3, 'deducted', $4)`,
-                        [order.user_id, orderId, -points, `خصم نقاط من طلب مرتجع/ملغي رقم ${orderId}`]
-                    );
-                    
-                    console.log(`⚠️ Deducted ${points} loyalty points from user ${order.user_id} for returned/cancelled order ${orderId}`);
-                } catch (deductionError) {
-                    console.error(`❌ ERROR deducting points:`, deductionError);
-                    // Don't throw - let the order status update continue
-                }
-            } else {
-                console.log(`⚠️ Skipping deduction: points=${points}, userId=${order.user_id}`);
+                const { rows: updatedUser } = await query(
+                    "UPDATE users SET loyalty_points = GREATEST(COALESCE(loyalty_points, 0) - $1, 0) WHERE id = $2 RETURNING loyalty_points",
+                    [points, order.user_id]
+                );
+                
+                const newBalance = updatedUser[0]?.loyalty_points || 0;
+                
+                await query(
+                    `INSERT INTO loyalty_points_history (user_id, order_id, points, type, description)
+                     VALUES ($1, $2, $3, 'deducted', $4)`,
+                    [order.user_id, orderId, -points, `خصم بسبب ${newStatus === 'returned' ? 'مرتجع' : 'إلغاء'} للطلب رقم ${orderId}`]
+                );
+                
+                console.log(`⚠️ Deducted ${points} loyalty points from user ${order.user_id}. New balance: ${newBalance} (${oldStatus} → ${newStatus})`);
             }
-        } else {
-            console.log(`⚠️ Deduction condition NOT met`);
         }
 
         // Update order status
