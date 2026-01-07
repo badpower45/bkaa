@@ -7,7 +7,7 @@ if (!process.env.JWT_SECRET) {
 }
 const SECRET_KEY = process.env.JWT_SECRET;
 
-export const verifyToken = (req, res, next) => {
+export const verifyToken = async (req, res, next) => {
     const tokenHeader = req.headers['authorization'];
     console.log('🔑 verifyToken - Authorization header:', tokenHeader ? 'Present' : 'Missing');
     
@@ -19,13 +19,31 @@ export const verifyToken = (req, res, next) => {
     const token = tokenHeader.split(' ')[1]; // Bearer <token>
     console.log('🔑 Token extracted:', token ? `${token.substring(0, 20)}...` : 'None');
 
-    jwt.verify(token, SECRET_KEY, (err, decoded) => {
+    jwt.verify(token, SECRET_KEY, async (err, decoded) => {
         if (err) {
             console.log('❌ Token verification failed:', err.message);
             return res.status(401).send({ auth: false, message: 'Failed to authenticate token.' });
         }
 
         console.log('✅ Token verified for user:', decoded.id, 'role:', decoded.role);
+        
+        // 🚫 Check if user is blocked
+        try {
+            const result = await db.query('SELECT is_blocked, block_reason FROM users WHERE id = $1', [decoded.id]);
+            if (result.rows.length > 0 && result.rows[0].is_blocked) {
+                console.log('🚫 User is blocked:', decoded.id);
+                return res.status(403).json({ 
+                    auth: false, 
+                    blocked: true,
+                    message: 'تم حظر هذا الحساب. يرجى التواصل مع الدعم.',
+                    reason: result.rows[0].block_reason 
+                });
+            }
+        } catch (dbErr) {
+            console.error('❌ Error checking user block status:', dbErr);
+            // Continue anyway - don't break auth flow for DB error
+        }
+        
         // Save to request for use in other routes
         req.userId = decoded.id;
         req.userRole = decoded.role;

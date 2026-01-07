@@ -103,8 +103,16 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 
         if (!user) return res.status(404).send('No user found.');
 
+        // 🚫 Check if user is blocked FIRST
         if (user.is_blocked) {
-            return res.status(403).json({ error: 'تم حظر هذا الحساب. يرجى التواصل مع الدعم.' });
+            console.log('🚫 Blocked user attempted login:', email);
+            return res.status(403).json({ 
+                auth: false,
+                blocked: true,
+                error: 'تم حظر هذا الحساب. يرجى التواصل مع الدعم.',
+                reason: user.block_reason,
+                blockedAt: user.blocked_at
+            });
         }
 
         const storedPassword = user.password || '';
@@ -679,7 +687,7 @@ router.get('/verify-email', async (req, res) => {
         
         // Find user with this verification token
         const { rows } = await query(`
-            SELECT id, email, first_name FROM users 
+            SELECT id, email, first_name, is_blocked, block_reason FROM users 
             WHERE email_verification_token = $1 AND email_verified = false
         `, [tokenHash]);
 
@@ -688,6 +696,16 @@ router.get('/verify-email', async (req, res) => {
         }
 
         const user = rows[0];
+        
+        // 🚫 Check if user is blocked
+        if (user.is_blocked) {
+            console.log('🚫 Blocked user attempted email verification:', user.email);
+            return res.status(403).json({ 
+                blocked: true,
+                error: 'تم حظر هذا الحساب. لا يمكن التحقق من الإيميل.',
+                reason: user.block_reason 
+            });
+        }
         
         // Mark email as verified and clear verification token
         await query(`
