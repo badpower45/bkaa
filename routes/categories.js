@@ -11,7 +11,10 @@ router.get('/admin/all', async (req, res) => {
                 c.*,
                 COUNT(DISTINCT p.id) as products_count
             FROM categories c
-            LEFT JOIN products p ON p.category = c.name AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
+            LEFT JOIN products p ON (
+                (p.category = c.name OR p.category = c.name_ar) 
+                AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
+            )
             GROUP BY c.id
             ORDER BY c.display_order ASC, c.name ASC
         `);
