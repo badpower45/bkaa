@@ -4,7 +4,50 @@ import { verifyToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// حساب رسوم التوصيل
+// حساب رسوم التوصيل حسب المحافظة
+router.post('/calculate-by-governorate', async (req, res) => {
+    const { governorate, subtotal } = req.body;
+
+    if (!governorate || subtotal === undefined) {
+        return res.status(400).json({ error: 'Governorate and subtotal are required' });
+    }
+
+    try {
+        // استخدام الـ function من الداتابيز
+        const { rows } = await query(
+            `SELECT * FROM get_delivery_fee_by_governorate($1, $2)`,
+            [governorate, subtotal]
+        );
+
+        if (rows.length > 0) {
+            const result = rows[0];
+            return res.json({
+                deliveryFee: parseFloat(result.delivery_fee),
+                freeDelivery: result.free_delivery,
+                minOrder: parseFloat(result.min_order || 0),
+                canDeliver: true,
+                message: result.message,
+                governorate: governorate
+            });
+        } else {
+            // القيم الافتراضية
+            const defaultFee = subtotal >= 600 ? 0 : 20;
+            return res.json({
+                deliveryFee: defaultFee,
+                freeDelivery: defaultFee === 0,
+                minOrder: 0,
+                canDeliver: true,
+                message: defaultFee === 0 ? 'الشحن مجاني للطلبات فوق 600 جنيه' : 'رسوم التوصيل الافتراضية 20 جنيه',
+                governorate: governorate
+            });
+        }
+    } catch (err) {
+        console.error('Error calculating delivery fee by governorate:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// حساب رسوم التوصيل (الطريقة القديمة للتوافقية)
 router.post('/calculate', async (req, res) => {
     const { branchId, subtotal, customerLat, customerLng } = req.body;
 
@@ -149,6 +192,46 @@ router.get('/:branchId', async (req, res) => {
         }
 
         res.json({ message: 'success', data: rows[0] });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// الحصول على جميع رسوم المحافظات
+router.get('/governorates/all', async (req, res) => {
+    try {
+        const { rows } = await query(
+            `SELECT * FROM governorate_delivery_fees WHERE is_active = TRUE ORDER BY governorate ASC`
+        );
+
+        res.json({ message: 'success', data: rows });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// تحديث رسوم محافظة معينة (Admin only)
+router.put('/governorates/:id', [verifyToken], async (req, res) => {
+    const { id } = req.params;
+    const { delivery_fee, min_order, free_delivery_threshold } = req.body;
+
+    try {
+        const { rows } = await query(
+            `UPDATE governorate_delivery_fees 
+             SET delivery_fee = $1, 
+                 min_order = $2, 
+                 free_delivery_threshold = $3,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $4
+             RETURNING *`,
+            [delivery_fee, min_order, free_delivery_threshold, id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Governorate not found' });
+        }
+
+        res.json({ message: 'تم تحديث رسوم التوصيل بنجاح', data: rows[0] });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
