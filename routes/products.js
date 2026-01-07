@@ -435,7 +435,7 @@ router.get('/barcode/:barcode', async (req, res) => {
 router.post('/', [verifyToken, isAdmin], async (req, res) => {
     const { 
         name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
-        price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation, brandId 
+        price, originalPrice, branchId, branchIds, stockQuantity, expiryDate, shelfLocation, brandId 
     } = req.body;
     
     // Validation
@@ -450,6 +450,18 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
         return res.status(400).json({ 
             error: 'السعر مطلوب ويجب أن يكون أكبر من صفر',
             message: 'يرجى إدخال سعر صحيح للمنتج (يجب أن يكون أكبر من 0)'
+        });
+    }
+    
+    // 🆕 Validate branch selection - support both single and multiple branches
+    const targetBranchIds = branchIds && Array.isArray(branchIds) && branchIds.length > 0 
+        ? branchIds 
+        : (branchId ? [branchId] : [1]); // Default to branch 1 if nothing specified
+    
+    if (targetBranchIds.length === 0) {
+        return res.status(400).json({ 
+            error: 'يجب تحديد فرع واحد على الأقل',
+            message: 'يرجى اختيار فرع واحد على الأقل لإضافة المنتج'
         });
     }
     
@@ -480,36 +492,37 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
             brandId || null
         ]);
 
-        // Add to branch inventory - always add to at least branch 1
-        const targetBranchId = branchId || 1; // Default to branch 1 if not specified
-        const targetPrice = price || 0; // Default price to 0 if not provided
+        // 🆕 Add to multiple branch inventories
+        const targetPrice = price || 0;
         
-        const bpSql = `
-            INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
-            VALUES ($1, $2, $3, $4, $5, $6, TRUE)
-            ON CONFLICT (branch_id, product_id) DO UPDATE SET
-                price = EXCLUDED.price,
-                discount_price = EXCLUDED.discount_price,
-                stock_quantity = EXCLUDED.stock_quantity,
-                expiry_date = EXCLUDED.expiry_date,
-                is_available = EXCLUDED.is_available
-        `;
-        await query(bpSql, [
-            targetBranchId,
-            id,
-            targetPrice,
-            originalPrice || null, // السعر قبل (الأصلي) يُخزن في discount_price
-            stockQuantity || 0,
-            expiryDate || null
-        ]);
+        for (const targetBranchId of targetBranchIds) {
+            const bpSql = `
+                INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
+                VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+                ON CONFLICT (branch_id, product_id) DO UPDATE SET
+                    price = EXCLUDED.price,
+                    discount_price = EXCLUDED.discount_price,
+                    stock_quantity = EXCLUDED.stock_quantity,
+                    expiry_date = EXCLUDED.expiry_date,
+                    is_available = EXCLUDED.is_available
+            `;
+            await query(bpSql, [
+                targetBranchId,
+                id,
+                targetPrice,
+                originalPrice || null,
+                stockQuantity || 0,
+                expiryDate || null
+            ]);
+        }
 
         await query('COMMIT');
 
-        console.log(`✅ Product created successfully:`, {
+        console.log(`✅ Product created successfully in ${targetBranchIds.length} branches:`, {
             id,
             name,
             price: targetPrice,
-            branchId: targetBranchId
+            branchIds: targetBranchIds
         });
 
         res.json({
@@ -517,7 +530,7 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
             "data": {
                 ...rows[0],
                 price: targetPrice,
-                branch_id: targetBranchId
+                branch_ids: targetBranchIds
             }
         });
     } catch (err) {
@@ -542,7 +555,7 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
 router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
     const { 
         name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
-        price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation, brandId 
+        price, originalPrice, branchId, branchIds, stockQuantity, expiryDate, shelfLocation, brandId 
     } = req.body;
     
     try {
@@ -575,25 +588,32 @@ router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
             return res.status(404).json({ error: 'Product not found' });
         }
 
-        // Update branch inventory if price provided
-        if (price !== undefined && branchId) {
-            const bpSql = `
-                INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
-                VALUES ($1, $2, $3, $4, $5, $6, TRUE)
-                ON CONFLICT (branch_id, product_id) DO UPDATE SET
-                    price = EXCLUDED.price,
-                    discount_price = EXCLUDED.discount_price,
-                    stock_quantity = EXCLUDED.stock_quantity,
-                    expiry_date = EXCLUDED.expiry_date
-            `;
-            await query(bpSql, [
-                branchId,
-                req.params.id,
-                price,
-                originalPrice || null,
-                stockQuantity || 0,
-                expiryDate || null
-            ]);
+        // 🆕 Update branch inventory for multiple branches if provided
+        const targetBranchIds = branchIds && Array.isArray(branchIds) && branchIds.length > 0 
+            ? branchIds 
+            : (branchId ? [branchId] : []);
+        
+        if (price !== undefined && targetBranchIds.length > 0) {
+            for (const targetBranchId of targetBranchIds) {
+                const bpSql = `
+                    INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
+                    VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+                    ON CONFLICT (branch_id, product_id) DO UPDATE SET
+                        price = EXCLUDED.price,
+                        discount_price = EXCLUDED.discount_price,
+                        stock_quantity = EXCLUDED.stock_quantity,
+                        expiry_date = EXCLUDED.expiry_date
+                `;
+                await query(bpSql, [
+                    targetBranchId,
+                    req.params.id,
+                    price,
+                    originalPrice || null,
+                    stockQuantity || 0,
+                    expiryDate || null
+                ]);
+            }
+            console.log(`✅ Product ${req.params.id} updated in ${targetBranchIds.length} branches`);
         }
 
         await query('COMMIT');
