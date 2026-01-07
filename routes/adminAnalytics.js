@@ -21,7 +21,17 @@ router.get('/customer-analytics', [verifyToken, isAdmin], async (req, res) => {
     try {
         const { search, rating, sortBy, limit } = req.query;
         
-        let sql = 'SELECT * FROM customer_analytics WHERE 1=1';
+        let sql = `
+            SELECT 
+                ca.*,
+                u.is_blocked,
+                u.block_reason,
+                u.blocked_at,
+                u.banned_until
+            FROM customer_analytics ca
+            LEFT JOIN users u ON ca.id = u.id
+            WHERE 1=1
+        `;
         const params = [];
         let paramIndex = 1;
         
@@ -114,7 +124,15 @@ router.get('/customer-analytics/:userId', [verifyToken, isAdmin], async (req, re
         const { userId } = req.params;
         
         const result = await query(
-            'SELECT * FROM customer_analytics WHERE id = $1',
+            `SELECT 
+                ca.*,
+                u.is_blocked,
+                u.block_reason,
+                u.blocked_at,
+                u.banned_until
+            FROM customer_analytics ca
+            LEFT JOIN users u ON ca.id = u.id
+            WHERE ca.id = $1`,
             [userId]
         );
         
