@@ -435,7 +435,7 @@ router.get('/barcode/:barcode', async (req, res) => {
 router.post('/', [verifyToken, isAdmin], async (req, res) => {
     const { 
         name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
-        price, originalPrice, branchId, branchIds, stockQuantity, expiryDate, shelfLocation, brandId 
+        price, originalPrice, branchId, branchIds, branchesData, stockQuantity, expiryDate, shelfLocation, brandId 
     } = req.body;
     
     // Validation
@@ -492,13 +492,23 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
             brandId || null
         ]);
 
-        // 🆕 Add to multiple branch inventories
+        // 🆕 Add to multiple branch inventories with specific data for each branch
         const targetPrice = price || 0;
         
         for (const targetBranchId of targetBranchIds) {
+            // Find branch-specific data
+            const branchSpecificData = branchesData?.find((bd) => bd.branchId === targetBranchId);
+            
+            const branchPrice = branchSpecificData?.price || targetPrice;
+            const branchOriginalPrice = branchSpecificData?.originalPrice || originalPrice || null;
+            const branchStockQuantity = branchSpecificData?.stockQuantity !== undefined 
+                ? branchSpecificData.stockQuantity 
+                : (stockQuantity || 0);
+            const branchIsAvailable = branchSpecificData?.isAvailable !== false;
+            
             const bpSql = `
                 INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
-                VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ON CONFLICT (branch_id, product_id) DO UPDATE SET
                     price = EXCLUDED.price,
                     discount_price = EXCLUDED.discount_price,
@@ -509,11 +519,14 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
             await query(bpSql, [
                 targetBranchId,
                 id,
-                targetPrice,
-                originalPrice || null,
-                stockQuantity || 0,
-                expiryDate || null
+                branchPrice,
+                branchOriginalPrice,
+                branchStockQuantity,
+                expiryDate || null,
+                branchIsAvailable
             ]);
+            
+            console.log(`✅ Added to branch ${targetBranchId}: price=${branchPrice}, stock=${branchStockQuantity}`);
         }
 
         await query('COMMIT');
@@ -521,7 +534,6 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
         console.log(`✅ Product created successfully in ${targetBranchIds.length} branches:`, {
             id,
             name,
-            price: targetPrice,
             branchIds: targetBranchIds
         });
 
@@ -555,7 +567,7 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
 router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
     const { 
         name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
-        price, originalPrice, branchId, branchIds, stockQuantity, expiryDate, shelfLocation, brandId 
+        price, originalPrice, branchId, branchIds, branchesData, stockQuantity, expiryDate, shelfLocation, brandId 
     } = req.body;
     
     try {
@@ -588,30 +600,48 @@ router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
             return res.status(404).json({ error: 'Product not found' });
         }
 
-        // 🆕 Update branch inventory for multiple branches if provided
+        // 🆕 Update branch inventory for multiple branches with branch-specific data
         const targetBranchIds = branchIds && Array.isArray(branchIds) && branchIds.length > 0 
             ? branchIds 
             : (branchId ? [branchId] : []);
         
         if (price !== undefined && targetBranchIds.length > 0) {
             for (const targetBranchId of targetBranchIds) {
+                // Find branch-specific data
+                const branchSpecificData = branchesData?.find((bd) => bd.branchId === targetBranchId);
+                
+                const branchPrice = branchSpecificData?.price !== undefined 
+                    ? branchSpecificData.price 
+                    : price;
+                const branchOriginalPrice = branchSpecificData?.originalPrice !== undefined 
+                    ? branchSpecificData.originalPrice 
+                    : (originalPrice || null);
+                const branchStockQuantity = branchSpecificData?.stockQuantity !== undefined 
+                    ? branchSpecificData.stockQuantity 
+                    : (stockQuantity || 0);
+                const branchIsAvailable = branchSpecificData?.isAvailable !== false;
+                
                 const bpSql = `
                     INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
-                    VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
                     ON CONFLICT (branch_id, product_id) DO UPDATE SET
                         price = EXCLUDED.price,
                         discount_price = EXCLUDED.discount_price,
                         stock_quantity = EXCLUDED.stock_quantity,
-                        expiry_date = EXCLUDED.expiry_date
+                        expiry_date = EXCLUDED.expiry_date,
+                        is_available = EXCLUDED.is_available
                 `;
                 await query(bpSql, [
                     targetBranchId,
                     req.params.id,
-                    price,
-                    originalPrice || null,
-                    stockQuantity || 0,
-                    expiryDate || null
+                    branchPrice,
+                    branchOriginalPrice,
+                    branchStockQuantity,
+                    expiryDate || null,
+                    branchIsAvailable
                 ]);
+                
+                console.log(`✅ Updated branch ${targetBranchId}: price=${branchPrice}, stock=${branchStockQuantity}, available=${branchIsAvailable}`);
             }
             console.log(`✅ Product ${req.params.id} updated in ${targetBranchIds.length} branches`);
         }
