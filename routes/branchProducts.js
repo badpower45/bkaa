@@ -192,15 +192,6 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
             req.user.id
         ]);
 
-        const { rows } = await query(sql, [
-            branchId,
-            productId,
-            price,
-            discountPrice || null,
-            stockQuantity || 0,
-            isAvailable !== undefined ? isAvailable : true
-        ]);
-
         res.json({ message: 'تم إضافة/تحديث المنتج في الفرع بنجاح', data: rows[0] });
     } catch (err) {
         console.error("Error adding product to branch:", err);
