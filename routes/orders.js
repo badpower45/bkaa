@@ -522,11 +522,12 @@ router.put('/:id/status', [verifyToken, isAdmin], async (req, res) => {
         }
 
         const order = orderRows[0];
-        const oldStatus = order.status;
-        const newStatus = status;
+        const oldStatus = order.status.toLowerCase(); // Normalize to lowercase
+        const newStatus = status.toLowerCase(); // Normalize to lowercase
         const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
 
-        console.log(`🔄 Order #${orderId} status transition: ${oldStatus} → ${newStatus}`);
+        console.log(`🔄 Order #${orderId} status transition: ${order.status} (${oldStatus}) → ${status} (${newStatus})`);
+        console.log(`📊 Order details: user_id=${order.user_id}, total=${order.total}, points=${Math.floor(Number(order.total) || 0)}`);
 
         // ========================================
         // INVENTORY MANAGEMENT (Unified Logic)
@@ -616,25 +617,47 @@ router.put('/:id/status', [verifyToken, isAdmin], async (req, res) => {
         if (['returned', 'cancelled'].includes(newStatus) && oldStatus === 'delivered') {
             const points = Math.floor(Number(order.total) || 0);
             
+            console.log(`💰 DEDUCTION CHECK TRIGGERED:`);
+            console.log(`   - New Status: ${newStatus}`);
+            console.log(`   - Old Status: ${oldStatus}`);
+            console.log(`   - Points to deduct: ${points}`);
+            console.log(`   - User ID: ${order.user_id}`);
+            
             if (points > 0 && order.user_id) {
+                // Get current balance before deduction
+                const { rows: currentBalance } = await query(
+                    "SELECT loyalty_points FROM users WHERE id = $1",
+                    [order.user_id]
+                );
+                const balanceBefore = currentBalance[0]?.loyalty_points || 0;
+                console.log(`   - Current balance: ${balanceBefore}`);
+                
+                // Deduct points
                 const { rows: updatedUser } = await query(
                     "UPDATE users SET loyalty_points = GREATEST(COALESCE(loyalty_points, 0) - $1, 0) WHERE id = $2 RETURNING loyalty_points",
                     [points, order.user_id]
                 );
                 
                 const newBalance = updatedUser[0]?.loyalty_points || 0;
+                console.log(`   - New balance after deduction: ${newBalance}`);
                 
+                // Record in history
                 await query(
                     `INSERT INTO loyalty_points_history (user_id, order_id, points, type, description)
                      VALUES ($1, $2, $3, 'deducted', $4)`,
                     [order.user_id, orderId, -points, `خصم بسبب ${newStatus === 'returned' ? 'مرتجع' : 'إلغاء'} للطلب رقم ${orderId}`]
                 );
                 
-                console.log(`⚠️ Deducted ${points} loyalty points from user ${order.user_id}. New balance: ${newBalance} (${oldStatus} → ${newStatus})`);
+                console.log(`⚠️ ✅ SUCCESSFULLY deducted ${points} loyalty points from user ${order.user_id}`);
+                console.log(`   Balance: ${balanceBefore} → ${newBalance} (deducted: ${balanceBefore - newBalance})`);
+            } else {
+                console.log(`   ❌ SKIPPED: points=${points}, user_id=${order.user_id}`);
             }
+        } else {
+            console.log(`💰 DEDUCTION CHECK SKIPPED: newStatus=${newStatus}, oldStatus=${oldStatus}, isReturned/Cancelled=${['returned', 'cancelled'].includes(newStatus)}, wasDelivered=${oldStatus === 'delivered'}`);
         }
 
-        // Update order status
+        // Update order status (normalize case)
         const result = await query("UPDATE orders SET status = $1 WHERE id = $2 RETURNING *", [status, orderId]);
 
         await query('COMMIT');
