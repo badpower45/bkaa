@@ -67,7 +67,7 @@ router.get('/', async (req, res) => {
                         params.push(branchId);
                     }
 
-                    productsQuery += ` ORDER BY p.id ASC LIMIT $${params.length + 1}`;
+                    productsQuery += ` ORDER BY p.is_new DESC, p.id DESC LIMIT $${params.length + 1}`;
                     params.push(section.max_products || 8);
 
                     console.log(`🔎 Searching for category: "${section.category}" with multiple matching strategies`);
