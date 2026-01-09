@@ -6,14 +6,22 @@ const router = express.Router();
 // Admin: Get all categories (including inactive) - MUST BE BEFORE /:id
 router.get('/admin/all', async (req, res) => {
     try {
+        const includeOfferOnly = req.query.includeOfferOnly === 'true';
+        const offerOnlyClause = includeOfferOnly
+            ? ''
+            : 'AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)';
+
         const result = await pool.query(`
             SELECT 
                 c.*,
                 COUNT(DISTINCT p.id) as products_count
             FROM categories c
             LEFT JOIN products p ON (
-                (p.category = c.name OR p.category = c.name_ar) 
-                AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
+                (
+                    TRIM(LOWER(p.category)) = TRIM(LOWER(c.name))
+                    OR TRIM(LOWER(p.category)) = TRIM(LOWER(c.name_ar))
+                )
+                ${offerOnlyClause}
             )
             GROUP BY c.id
             ORDER BY c.display_order ASC, c.name ASC
