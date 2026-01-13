@@ -38,17 +38,17 @@ const upload = multer({
 // Column mapping (support both English and Arabic names)
 const COLUMN_MAPPING = {
     // Required fields
-    'name': ['name', 'product_name', 'اسم المنتج', 'الاسم'],
-    'barcode': ['barcode', 'الباركود', 'باركود'],
-    'old_price': ['old_price', 'السعر قبل', 'السعر القديم', 'سعر قبل'],
-    'price': ['price', 'السعر بعد', 'السعر', 'سعر بعد', 'سعر'],
-    'category': ['category', 'التصنيف الاساسي', 'التصنيف الأساسي', 'القسم', 'الفئة'],
-    'subcategory': ['subcategory', 'sub_category', 'التصنيف الثانوي', 'تصنيف ثانوي'],
-    'branch_id': ['branch_id', 'الفرع', 'فرع', 'معرف الفرع'],
-    'stock_quantity': ['stock_quantity', 'الكمية', 'الكميه', 'كمية', 'كميه'],
-    'image': ['image', 'image_url', 'الصورة', 'صورة', 'صوره'],
-    'expiry_date': ['expiry_date', 'تاريخ الصلاحيه', 'تاريخ الصلاحية', 'صلاحيه', 'صلاحية'],
-    'brand': ['brand', 'brand_name', 'البراند', 'الماركة', 'اسم البراند']
+    'name': ['name', 'product_name', 'اسم المنتج', 'الاسم', 'المنتج', 'اسم'],
+    'barcode': ['barcode', 'الباركود', 'باركود', 'Barcode'],
+    'old_price': ['old_price', 'originalPrice', 'السعر قبل', 'السعر القديم', 'سعر قبل', 'السعر الاصلي', 'discount_price'],
+    'price': ['price', 'السعر بعد', 'السعر', 'سعر بعد', 'سعر', 'Price', 'السعر الحالي'],
+    'category': ['category', 'التصنيف الاساسي', 'التصنيف الأساسي', 'القسم', 'الفئة', 'Category', 'التصنيف'],
+    'subcategory': ['subcategory', 'sub_category', 'التصنيف الثانوي', 'تصنيف ثانوي', 'Subcategory'],
+    'branch_id': ['branch_id', 'branchId', 'الفرع', 'فرع', 'معرف الفرع', 'Branch'],
+    'stock_quantity': ['stock_quantity', 'stockQuantity', 'الكمية', 'الكميه', 'كمية', 'كميه', 'Stock', 'عدد القطع المتوفره', 'المخزون'],
+    'image': ['image', 'image_url', 'الصورة', 'صورة', 'صوره', 'Image', 'لينك الصوره'],
+    'expiry_date': ['expiry_date', 'expiryDate', 'تاريخ الصلاحيه', 'تاريخ الصلاحية', 'صلاحيه', 'صلاحية', 'Expiry'],
+    'brand': ['brand', 'brand_name', 'brand_id', 'البراند', 'الماركة', 'اسم البراند', 'Brand']
 };
 
 // Find column value by multiple possible names
