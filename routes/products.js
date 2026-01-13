@@ -203,7 +203,10 @@ router.get('/', async (req, res) => {
             let paramIndex = 1;
 
             if (category && category !== 'All') {
-                sql += ` AND p.category = $${paramIndex}`;
+                sql += ` AND (
+                    normalize_arabic_text(p.category) = normalize_arabic_text($${paramIndex})
+                    OR p.category = $${paramIndex}
+                )`;
                 params.push(category);
                 paramIndex++;
             }
@@ -260,7 +263,10 @@ router.get('/', async (req, res) => {
         let paramIndex = 2;
 
         if (category && category !== 'All') {
-            sql += ` AND p.category = $${paramIndex}`;
+            sql += ` AND (
+                normalize_arabic_text(p.category) = normalize_arabic_text($${paramIndex})
+                OR p.category = $${paramIndex}
+            )`;
             params.push(category);
             paramIndex++;
         }
