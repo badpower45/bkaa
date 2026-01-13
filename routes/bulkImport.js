@@ -79,8 +79,12 @@ function mapRowToProduct(row, rowIndex) {
     
     // Extract all available fields
     for (const field of allFields) {
-        const value = findColumnValue(row, COLUMN_MAPPING[field]);
+        let value = findColumnValue(row, COLUMN_MAPPING[field]);
         if (value || value === 0) {
+            // Convert to string if needed (for barcode, name, category, etc.)
+            if (['barcode', 'name', 'category', 'subcategory', 'image', 'brand'].includes(field) && typeof value === 'number') {
+                value = String(value);
+            }
             product[field] = value;
         } else {
             // Just warn, don't fail
@@ -346,6 +350,11 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
             
             for (const { product, warnings, errors } of savedDrafts) {
                 try {
+                    // Convert barcode to string if it's a number
+                    if (product.barcode && typeof product.barcode === 'number') {
+                        product.barcode = String(product.barcode);
+                    }
+                    
                     // Check if product exists (by barcode or name)
                     let existingProduct = null;
                     
