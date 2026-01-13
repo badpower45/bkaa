@@ -290,53 +290,180 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
         
         console.log(`Parsed ${savedDrafts.length} products, preparing to save as drafts...`);
         
-        // Save all as draft products
+        // Save all as draft products with UPSERT logic
         const imported = [];
+        const updated = [];
         const importErrors = [];
+        const newCategories = [];
         
         await query('BEGIN');
         
         try {
-            for (const { product, warnings, errors } of savedDrafts) {
+            // First, create any new categories that don't exist
+            const existingCategories = new Set();
+            const categoriesResult = await query('SELECT name, name_ar FROM categories WHERE parent_id IS NULL');
+            categoriesResult.rows.forEach(cat => {
+                if (cat.name) existingCategories.add(cat.name.toLowerCase().trim());
+                if (cat.name_ar) existingCategories.add(cat.name_ar.toLowerCase().trim());
+            });
+            
+            // Collect unique categories from products
+            const categoriesToAdd = new Map();
+            for (const { product } of savedDrafts) {
+                if (product.category) {
+                    const normalized = product.category.toLowerCase().trim();
+                    if (!existingCategories.has(normalized) && !categoriesToAdd.has(normalized)) {
+                        categoriesToAdd.set(normalized, product.category);
+                    }
+                }
+            }
+            
+            // Insert new categories
+            for (const [normalized, originalName] of categoriesToAdd.entries()) {
                 try {
-                    // Insert into draft_products table (accepting incomplete data)
-                    const { rows: insertedDraft } = await query(`
-                        INSERT INTO draft_products (
-                            name, category, subcategory, image, barcode,
-                            old_price, price, discount_percentage,
-                            branch_id, stock_quantity, expiry_date,
-                            brand_name,
-                            status, import_batch_id, imported_by,
-                            validation_errors, created_at, updated_at
-                        ) VALUES (
-                            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                            $12, $13, $14, $15, $16, NOW(), NOW()
-                        ) RETURNING id, name, category, status
+                    console.log(`Creating new category: ${originalName}`);
+                    const { rows: newCat } = await query(`
+                        INSERT INTO categories (name, name_ar, icon, bg_color, display_order, is_active, parent_id)
+                        VALUES ($1, $2, $3, $4, (SELECT COALESCE(MAX(display_order), 0) + 1 FROM categories WHERE parent_id IS NULL), true, NULL)
+                        ON CONFLICT (name) DO NOTHING
+                        RETURNING id, name, name_ar
                     `, [
-                        product.name || 'منتج بدون اسم',
-                        product.category || null,
-                        product.subcategory || null,
-                        product.image || null,
-                        product.barcode || null,
-                        product.old_price || null,
-                        product.price || null,
-                        product.discount_percentage || 0,
-                        product.branch_id || 1,
-                        product.stock_quantity || 0,
-                        product.expiry_date || null,
-                        product.brand || null,
-                        errors.length > 0 ? 'draft' : 'validated',
-                        batchId,
-                        userId,
-                        JSON.stringify({ errors, warnings })
+                        originalName,
+                        originalName,
+                        '📦',
+                        'bg-gray-50'
                     ]);
                     
-                    imported.push({
-                        id: insertedDraft[0].id,
-                        name: insertedDraft[0].name,
-                        category: insertedDraft[0].category,
-                        status: insertedDraft[0].status
-                    });
+                    if (newCat.length > 0) {
+                        newCategories.push(newCat[0]);
+                        existingCategories.add(normalized);
+                        console.log(`✅ Created category: ${originalName} (ID: ${newCat[0].id})`);
+                    }
+                } catch (err) {
+                    console.error(`Error creating category ${originalName}:`, err.message);
+                }
+            }
+            
+            for (const { product, warnings, errors } of savedDrafts) {
+                try {
+                    // Check if product exists (by barcode or name)
+                    let existingProduct = null;
+                    
+                    if (product.barcode && product.barcode.trim() !== '') {
+                        // Try to find by barcode first
+                        const { rows } = await query(
+                            'SELECT id FROM draft_products WHERE barcode = $1 AND status != $2 LIMIT 1',
+                            [product.barcode.trim(), 'rejected']
+                        );
+                        if (rows.length > 0) {
+                            existingProduct = rows[0];
+                        }
+                    }
+                    
+                    // If not found by barcode, try by name
+                    if (!existingProduct && product.name && product.name.trim() !== '') {
+                        const { rows } = await query(
+                            'SELECT id FROM draft_products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) AND status != $2 LIMIT 1',
+                            [product.name.trim(), 'rejected']
+                        );
+                        if (rows.length > 0) {
+                            existingProduct = rows[0];
+                        }
+                    }
+                    
+                    if (existingProduct) {
+                        // UPDATE existing product - keeping old values if new ones are null
+                        const { rows: updatedDraft } = await query(`
+                            UPDATE draft_products SET
+                                name = COALESCE($1, name),
+                                category = COALESCE($2, category),
+                                subcategory = COALESCE($3, subcategory),
+                                image = COALESCE($4, image),
+                                barcode = COALESCE($5, barcode),
+                                old_price = COALESCE($6, old_price),
+                                price = COALESCE($7, price),
+                                discount_percentage = COALESCE($8, discount_percentage),
+                                branch_id = COALESCE($9, branch_id),
+                                stock_quantity = COALESCE($10, stock_quantity),
+                                expiry_date = COALESCE($11, expiry_date),
+                                brand_name = COALESCE($12, brand_name),
+                                status = $13,
+                                import_batch_id = $14,
+                                imported_by = $15,
+                                validation_errors = $16,
+                                updated_at = NOW()
+                            WHERE id = $17
+                            RETURNING id, name, category, status
+                        `, [
+                            product.name || null,
+                            product.category || null,
+                            product.subcategory || null,
+                            product.image || null,
+                            product.barcode || null,
+                            product.old_price || null,
+                            product.price || null,
+                            product.discount_percentage || 0,
+                            product.branch_id || null,
+                            product.stock_quantity || null,
+                            product.expiry_date || null,
+                            product.brand || null,
+                            errors.length > 0 ? 'draft' : 'validated',
+                            batchId,
+                            userId,
+                            JSON.stringify({ errors, warnings }),
+                            existingProduct.id
+                        ]);
+                        
+                        updated.push({
+                            id: updatedDraft[0].id,
+                            name: updatedDraft[0].name,
+                            category: updatedDraft[0].category,
+                            status: updatedDraft[0].status
+                        });
+                        
+                        console.log(`📝 Updated product: ${product.name} (ID: ${updatedDraft[0].id})`);
+                    } else {
+                        // INSERT new product
+                        const { rows: insertedDraft } = await query(`
+                            INSERT INTO draft_products (
+                                name, category, subcategory, image, barcode,
+                                old_price, price, discount_percentage,
+                                branch_id, stock_quantity, expiry_date,
+                                brand_name,
+                                status, import_batch_id, imported_by,
+                                validation_errors, created_at, updated_at
+                            ) VALUES (
+                                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                                $12, $13, $14, $15, $16, NOW(), NOW()
+                            ) RETURNING id, name, category, status
+                        `, [
+                            product.name || 'منتج بدون اسم',
+                            product.category || null,
+                            product.subcategory || null,
+                            product.image || null,
+                            product.barcode || null,
+                            product.old_price || null,
+                            product.price || null,
+                            product.discount_percentage || 0,
+                            product.branch_id || 1,
+                            product.stock_quantity || 0,
+                            product.expiry_date || null,
+                            product.brand || null,
+                            errors.length > 0 ? 'draft' : 'validated',
+                            batchId,
+                            userId,
+                            JSON.stringify({ errors, warnings })
+                        ]);
+                        
+                        imported.push({
+                            id: insertedDraft[0].id,
+                            name: insertedDraft[0].name,
+                            category: insertedDraft[0].category,
+                            status: insertedDraft[0].status
+                        });
+                        
+                        console.log(`➕ Added new product: ${product.name} (ID: ${insertedDraft[0].id})`);
+                    }
                 } catch (err) {
                     console.error('Error saving draft product:', product.name, err);
                     importErrors.push({
@@ -348,7 +475,21 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
             
             await query('COMMIT');
             
-            console.log(`Successfully saved ${imported.length} products as drafts`);
+            const totalProcessed = imported.length + updated.length;
+            console.log(`Successfully processed ${totalProcessed} products (${imported.length} new, ${updated.length} updated, ${newCategories.length} categories created)`);
+            
+            let message = `تم معالجة ${totalProcessed} منتج بنجاح`;
+            if (imported.length > 0) {
+                message += ` (${imported.length} جديد`;
+            }
+            if (updated.length > 0) {
+                message += imported.length > 0 ? `, ${updated.length} محدّث)` : ` (${updated.length} محدّث)`;
+            } else if (imported.length > 0) {
+                message += ')';
+            }
+            if (newCategories.length > 0) {
+                message += `. تم إنشاء ${newCategories.length} تصنيف جديد`;
+            }
             
             // Check if auto-publish is requested
             const autoPublish = req.body.autoPublish === 'true' || req.body.autoPublish === true;
@@ -413,29 +554,42 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                             );
                             
                             if (existingBranchProduct.rows.length > 0) {
+                                // UPDATE existing - SET new price and old_price, ADD to stock
                                 await query(`
                                     UPDATE branch_products 
                                     SET 
-                                        price = $1,
-                                        discount_price = $2,
-                                        stock_quantity = stock_quantity + $3,
-                                        expiry_date = $4
+                                        price = COALESCE($1, price),
+                                        discount_price = COALESCE($2, discount_price),
+                                        stock_quantity = COALESCE(stock_quantity, 0) + COALESCE($3, 0),
+                                        expiry_date = COALESCE($4, expiry_date),
+                                        updated_at = NOW()
                                     WHERE product_id = $5 AND branch_id = $6
                                 `, [
-                                    draft.price, draft.old_price, draft.stock_quantity,
-                                    draft.expiry_date, productId, draft.branch_id
+                                    draft.price,
+                                    draft.old_price,
+                                    draft.stock_quantity || 0,
+                                    draft.expiry_date,
+                                    productId,
+                                    draft.branch_id
                                 ]);
+                                console.log(`📝 Updated stock for product ${productId}: +${draft.stock_quantity || 0} items, price=${draft.price}, old_price=${draft.old_price}`);
                             } else {
+                                // INSERT new branch_product
                                 await query(`
                                     INSERT INTO branch_products (
                                         product_id, branch_id, price, discount_price,
-                                        stock_quantity, expiry_date
+                                        stock_quantity, expiry_date, is_available, created_at, updated_at
                                     )
-                                    VALUES ($1, $2, $3, $4, $5, $6)
+                                    VALUES ($1, $2, $3, $4, $5, $6, true, NOW(), NOW())
                                 `, [
-                                    productId, draft.branch_id, draft.price, draft.old_price,
-                                    draft.stock_quantity, draft.expiry_date
+                                    productId,
+                                    draft.branch_id,
+                                    draft.price,
+                                    draft.old_price,
+                                    draft.stock_quantity || 0,
+                                    draft.expiry_date
                                 ]);
+                                console.log(`➕ Added new branch_product: product=${productId}, branch=${draft.branch_id}, stock=${draft.stock_quantity}`);
                             }
                             
                             publishedCount++;
@@ -458,14 +612,18 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                     
                     res.json({
                         success: true,
-                        message: `✅ تم رفع ونشر ${publishedCount} منتج بنجاح! يمكنك الآن رؤيتها في قائمة المنتجات.`,
+                        message: `✅ تم رفع ونشر ${publishedCount} منتج بنجاح! ${message}`,
                         imported: imported.length,
+                        updated: updated.length,
                         published: publishedCount,
                         failed: importErrors.length + publishErrors.length,
                         total: rows.length,
+                        newCategories: newCategories.length,
                         autoPublished: true,
                         details: {
                             imported: imported,
+                            updated: updated,
+                            newCategories: newCategories.map(c => ({ name: c.name_ar || c.name, id: c.id })),
                             validationErrors: [],
                             importErrors: [...importErrors, ...publishErrors]
                         }
@@ -475,13 +633,17 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                     // Return draft response as fallback
                     res.json({
                         success: true,
-                        message: `⚠️ تم حفظ ${imported.length} منتج كمسودات. اضغط على "نشر جميع المنتجات" لنقلها إلى القائمة الرئيسية.`,
+                        message: message + `. اضغط على "نشر جميع المنتجات" لنقلها إلى القائمة الرئيسية.`,
                         imported: imported.length,
+                        updated: updated.length,
                         failed: importErrors.length,
                         total: rows.length,
+                        newCategories: newCategories.length,
                         batchId: batchId,
                         details: {
                             imported: imported,
+                            updated: updated,
+                            newCategories: newCategories.map(c => ({ name: c.name_ar || c.name, id: c.id })),
                             validationErrors: [],
                             importErrors: importErrors
                         }
@@ -491,13 +653,17 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                 // Return draft response
                 res.json({
                     success: true,
-                    message: `⚠️ تم حفظ ${imported.length} منتج كمسودات. اضغط على زر "نشر جميع المنتجات" الأخضر لنقلها إلى القائمة الرئيسية.`,
+                    message: message + `. اضغط على زر "نشر جميع المنتجات" الأخضر لنقلها إلى القائمة الرئيسية.`,
                     imported: imported.length,
+                    updated: updated.length,
                     failed: importErrors.length,
                     total: rows.length,
+                    newCategories: newCategories.length,
                     batchId: batchId,
                     details: {
                         imported: imported,
+                        updated: updated,
+                        newCategories: newCategories.map(c => ({ name: c.name_ar || c.name, id: c.id })),
                         validationErrors: [],
                         importErrors: importErrors
                     }

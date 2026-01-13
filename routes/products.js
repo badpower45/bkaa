@@ -10,6 +10,62 @@ const router = express.Router();
 // ✅ Security: Use secure file upload middleware
 const secureExcelUpload = createExcelUploader();
 
+const normalizeCategoryValue = (value = '') =>
+    value
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/أ|إ|آ/g, 'ا')
+        .replace(/ة/g, 'ه')
+        .replace(/ى/g, 'ي')
+        .replace(/\s+/g, '')
+        .replace(/[-_]/g, '');
+
+const buildCategoryIndex = async () => {
+    const { rows } = await query('SELECT id, name, name_ar, parent_id FROM categories');
+    const byId = new Map();
+    const rootMap = new Map();
+    const subMapByParent = new Map();
+    const subMapGlobal = new Map();
+
+    rows.forEach((row) => {
+        byId.set(row.id, row);
+        const keys = [row.name, row.name_ar].filter(Boolean).map(normalizeCategoryValue);
+        if (row.parent_id) {
+            const map = subMapByParent.get(row.parent_id) || new Map();
+            keys.forEach((key) => {
+                if (!map.has(key)) map.set(key, row);
+                if (!subMapGlobal.has(key)) subMapGlobal.set(key, row);
+            });
+            subMapByParent.set(row.parent_id, map);
+        } else {
+            keys.forEach((key) => {
+                if (!rootMap.has(key)) rootMap.set(key, row);
+            });
+        }
+    });
+
+    return { byId, rootMap, subMapByParent, subMapGlobal };
+};
+
+const mapCategoryValues = (rawCategory, rawSubcategory, categoryIndex) => {
+    const categoryKey = rawCategory ? normalizeCategoryValue(rawCategory) : '';
+    const subcategoryKey = rawSubcategory ? normalizeCategoryValue(rawSubcategory) : '';
+    const matchedCategory = categoryKey ? categoryIndex.rootMap.get(categoryKey) : null;
+    const subMap = matchedCategory ? categoryIndex.subMapByParent.get(matchedCategory.id) : null;
+    const matchedSubcategory = subcategoryKey
+        ? (subMap?.get(subcategoryKey) || categoryIndex.subMapGlobal.get(subcategoryKey))
+        : null;
+    const parentCategory = !matchedCategory && matchedSubcategory?.parent_id
+        ? categoryIndex.byId.get(matchedSubcategory.parent_id)
+        : null;
+
+    return {
+        category: (matchedCategory || parentCategory)?.name_ar || (matchedCategory || parentCategory)?.name || rawCategory || null,
+        subcategory: matchedSubcategory?.name_ar || matchedSubcategory?.name || rawSubcategory || null
+    };
+};
+
 // Dev-only: Seed sample products + branch inventory for quick testing
 router.post('/dev/seed-sample', async (req, res) => {
     try {
@@ -134,11 +190,9 @@ router.get('/', async (req, res) => {
                 SELECT DISTINCT ON (p.id) p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, 
                        p.is_organic, p.is_new, p.barcode, p.shelf_location, p.subcategory, p.description,
                        bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id,
-                       p.brand_id, b.name_ar as brand_name, b.name_en as brand_name_en,
                        (mo.id IS NOT NULL) AS in_magazine
                 FROM products p
                 LEFT JOIN branch_products bp ON p.id = bp.product_id
-                LEFT JOIN brands b ON p.brand_id = b.id
                 LEFT JOIN magazine_offers mo ON mo.product_id = p.id 
                     AND mo.is_active = TRUE 
                     AND (mo.start_date IS NULL OR mo.start_date <= NOW())
@@ -193,16 +247,14 @@ router.get('/', async (req, res) => {
         let sql = `
             SELECT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, p.is_organic, p.is_new, p.barcode, p.shelf_location,
                    bp.price, bp.discount_price, bp.stock_quantity, bp.is_available,
-                   p.brand_id, b.name_ar as brand_name, b.name_en as brand_name_en,
                    (mo.id IS NOT NULL) AS in_magazine
-            FROM products p
+        FROM products p
             JOIN branch_products bp ON p.id = bp.product_id
-            LEFT JOIN brands b ON p.brand_id = b.id
             LEFT JOIN magazine_offers mo ON mo.product_id = p.id 
                 AND mo.is_active = TRUE 
                 AND (mo.start_date IS NULL OR mo.start_date <= NOW())
                 AND (mo.end_date IS NULL OR mo.end_date >= NOW())
-            WHERE bp.branch_id = $1 AND bp.is_available = TRUE AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
+            WHERE bp.branch_id = $1 AND bp.is_available = TRUE
         `;
         const params = [branchId];
         let paramIndex = 2;
@@ -219,7 +271,7 @@ router.get('/', async (req, res) => {
             paramIndex++;
         }
         
-        // Hide منتجات المجلة من القوائم العادية (إلا إذا طُلب صراحة)
+        // إخفاء منتجات المجلة من القوائم العادية إلا إذا طلب صراحة
         if (includeMagazine !== 'true') {
             sql += ` AND mo.id IS NULL`;
         }
@@ -250,51 +302,6 @@ router.get('/', async (req, res) => {
     }
 });
 
-// Search Products - MUST BE BEFORE /:id to avoid matching 'search' as an id
-router.get('/search', async (req, res) => {
-    const { q, branchId } = req.query;
-
-    if (!q) {
-        return res.status(400).json({ error: "Search query required" });
-    }
-
-    if (!branchId) {
-        return res.status(400).json({ error: "Branch ID required" });
-    }
-
-    try {
-        const sql = `
-            SELECT 
-                p.*, 
-                bp.price, 
-                bp.discount_price, 
-                bp.stock_quantity, 
-                bp.reserved_quantity,
-                bp.is_available,
-                (bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) as available_stock,
-                CASE 
-                    WHEN (bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) > 0 THEN TRUE
-                    ELSE FALSE
-                END as in_stock
-            FROM products p
-            JOIN branch_products bp ON p.id = bp.product_id
-            WHERE bp.branch_id = $1 
-            AND (p.name ILIKE $2 OR p.description ILIKE $2 OR p.barcode ILIKE $2 OR p.category ILIKE $2)
-            AND bp.is_available = TRUE
-            AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
-            ORDER BY 
-                CASE WHEN (bp.stock_quantity - COALESCE(bp.reserved_quantity, 0)) > 0 THEN 0 ELSE 1 END,
-                p.name
-        `;
-        const { rows } = await query(sql, [branchId, `%${q}%`]);
-        
-        res.json({ message: 'success', data: rows });
-    } catch (err) {
-        console.error("Error searching products:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
 // Get single product
 router.get('/:id', async (req, res) => {
     const { id } = req.params;
@@ -305,23 +312,14 @@ router.get('/:id', async (req, res) => {
 
         if (branchId) {
             sql = `
-                SELECT p.*, 
-                       bp.price, bp.discount_price, bp.stock_quantity, bp.is_available,
-                       b.name_ar as brand_name, b.name_en as brand_name_en
+                SELECT p.*, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
                 FROM products p
                 LEFT JOIN branch_products bp ON p.id = bp.product_id AND bp.branch_id = $2
-                LEFT JOIN brands b ON p.brand_id = b.id
                 WHERE p.id = $1
             `;
             params = [id, branchId];
         } else {
-            sql = `
-                SELECT p.*, 
-                       b.name_ar as brand_name, b.name_en as brand_name_en
-                FROM products p
-                LEFT JOIN brands b ON p.brand_id = b.id
-                WHERE p.id = $1
-            `;
+            sql = "SELECT * FROM products WHERE id = $1";
             params = [id];
         }
 
@@ -353,12 +351,9 @@ router.get('/barcode/:barcode', async (req, res) => {
                    bp.discount_price, 
                    bp.stock_quantity, 
                    bp.is_available,
-                   bp.branch_id,
-                   b.name_ar as brand_name, 
-                   b.name_en as brand_name_en
+                   bp.branch_id
             FROM products p
             LEFT JOIN branch_products bp ON p.id = bp.product_id AND bp.branch_id = $2
-            LEFT JOIN brands b ON p.brand_id = b.id
             WHERE p.barcode = $1
         `;
         
@@ -435,7 +430,7 @@ router.get('/barcode/:barcode', async (req, res) => {
 router.post('/', [verifyToken, isAdmin], async (req, res) => {
     const { 
         name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
-        price, originalPrice, branchId, branchIds, branchesData, stockQuantity, expiryDate, shelfLocation, brandId 
+        price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation 
     } = req.body;
     
     // Validation
@@ -453,18 +448,6 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
         });
     }
     
-    // 🆕 Validate branch selection - support both single and multiple branches
-    const targetBranchIds = branchIds && Array.isArray(branchIds) && branchIds.length > 0 
-        ? branchIds 
-        : (branchId ? [branchId] : [1]); // Default to branch 1 if nothing specified
-    
-    if (targetBranchIds.length === 0) {
-        return res.status(400).json({ 
-            error: 'يجب تحديد فرع واحد على الأقل',
-            message: 'يرجى اختيار فرع واحد على الأقل لإضافة المنتج'
-        });
-    }
-    
     // ID generation: keep using timestamp or UUID. Schema says TEXT.
     const id = Date.now().toString();
 
@@ -473,8 +456,8 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
 
         // Insert product
         const sql = `
-            INSERT INTO products (id, name, category, subcategory, image, weight, description, rating, reviews, is_organic, is_new, barcode, shelf_location, brand_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, $8, $9, $10, $11, $12)
+            INSERT INTO products (id, name, category, subcategory, image, weight, description, rating, reviews, is_organic, is_new, barcode, shelf_location)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, $8, $9, $10, $11)
             RETURNING *
         `;
         const { rows } = await query(sql, [
@@ -488,53 +471,37 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
             isOrganic ? true : false,
             isNew ? true : false,
             barcode || null,
-            shelfLocation || null,
-            brandId || null
+            shelfLocation || null
         ]);
 
-        // 🆕 Add to multiple branch inventories with specific data for each branch
-        const targetPrice = price || 0;
+        // Add to branch inventory - always add to at least branch 1
         
-        for (const targetBranchId of targetBranchIds) {
-            // Find branch-specific data
-            const branchSpecificData = branchesData?.find((bd) => bd.branchId === targetBranchId);
-            
-            const branchPrice = branchSpecificData?.price || targetPrice;
-            const branchOriginalPrice = branchSpecificData?.originalPrice || originalPrice || null;
-            const branchStockQuantity = branchSpecificData?.stockQuantity !== undefined 
-                ? branchSpecificData.stockQuantity 
-                : (stockQuantity || 0);
-            const branchIsAvailable = branchSpecificData?.isAvailable !== false;
-            
-            const bpSql = `
-                INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (branch_id, product_id) DO UPDATE SET
-                    price = EXCLUDED.price,
-                    discount_price = EXCLUDED.discount_price,
-                    stock_quantity = EXCLUDED.stock_quantity,
-                    expiry_date = EXCLUDED.expiry_date,
-                    is_available = EXCLUDED.is_available
-            `;
-            await query(bpSql, [
-                targetBranchId,
-                id,
-                branchPrice,
-                branchOriginalPrice,
-                branchStockQuantity,
-                expiryDate || null,
-                branchIsAvailable
-            ]);
-            
-            console.log(`✅ Added to branch ${targetBranchId}: price=${branchPrice}, stock=${branchStockQuantity}`);
-        }
+        const bpSql = `
+            INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
+            VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+            ON CONFLICT (branch_id, product_id) DO UPDATE SET
+                price = EXCLUDED.price,
+                discount_price = EXCLUDED.discount_price,
+                stock_quantity = EXCLUDED.stock_quantity,
+                expiry_date = EXCLUDED.expiry_date,
+                is_available = EXCLUDED.is_available
+        `;
+        await query(bpSql, [
+            targetBranchId,
+            id,
+            targetPrice,
+            originalPrice || null, // السعر قبل (الأصلي) يُخزن في discount_price
+            stockQuantity || 0,
+            expiryDate || null
+        ]);
 
         await query('COMMIT');
 
-        console.log(`✅ Product created successfully in ${targetBranchIds.length} branches:`, {
+        console.log(`✅ Product created successfully:`, {
             id,
             name,
-            branchIds: targetBranchIds
+            price: targetPrice,
+            branchId: targetBranchId
         });
 
         res.json({
@@ -542,7 +509,7 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
             "data": {
                 ...rows[0],
                 price: targetPrice,
-                branch_ids: targetBranchIds
+                branch_id: targetBranchId
             }
         });
     } catch (err) {
@@ -567,7 +534,7 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
 router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
     const { 
         name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
-        price, originalPrice, branchId, branchIds, branchesData, stockQuantity, expiryDate, shelfLocation, brandId 
+        price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation 
     } = req.body;
     
     try {
@@ -584,15 +551,14 @@ router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
                 barcode = COALESCE($7, barcode),
                 is_organic = COALESCE($8, is_organic),
                 is_new = COALESCE($9, is_new),
-                shelf_location = COALESCE($10, shelf_location),
-                brand_id = $11
-            WHERE id = $12
+                shelf_location = COALESCE($10, shelf_location)
+            WHERE id = $11
             RETURNING *
         `;
         
         const { rows } = await query(sql, [
             name, category, subcategory, image, weight, description, barcode,
-            isOrganic, isNew, shelfLocation, brandId, req.params.id
+            isOrganic, isNew, shelfLocation, req.params.id
         ]);
 
         if (rows.length === 0) {
@@ -600,50 +566,25 @@ router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
             return res.status(404).json({ error: 'Product not found' });
         }
 
-        // 🆕 Update branch inventory for multiple branches with branch-specific data
-        const targetBranchIds = branchIds && Array.isArray(branchIds) && branchIds.length > 0 
-            ? branchIds 
-            : (branchId ? [branchId] : []);
-        
-        if (price !== undefined && targetBranchIds.length > 0) {
-            for (const targetBranchId of targetBranchIds) {
-                // Find branch-specific data
-                const branchSpecificData = branchesData?.find((bd) => bd.branchId === targetBranchId);
-                
-                const branchPrice = branchSpecificData?.price !== undefined 
-                    ? branchSpecificData.price 
-                    : price;
-                const branchOriginalPrice = branchSpecificData?.originalPrice !== undefined 
-                    ? branchSpecificData.originalPrice 
-                    : (originalPrice || null);
-                const branchStockQuantity = branchSpecificData?.stockQuantity !== undefined 
-                    ? branchSpecificData.stockQuantity 
-                    : (stockQuantity || 0);
-                const branchIsAvailable = branchSpecificData?.isAvailable !== false;
-                
-                const bpSql = `
-                    INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    ON CONFLICT (branch_id, product_id) DO UPDATE SET
-                        price = EXCLUDED.price,
-                        discount_price = EXCLUDED.discount_price,
-                        stock_quantity = EXCLUDED.stock_quantity,
-                        expiry_date = EXCLUDED.expiry_date,
-                        is_available = EXCLUDED.is_available
-                `;
-                await query(bpSql, [
-                    targetBranchId,
-                    req.params.id,
-                    branchPrice,
-                    branchOriginalPrice,
-                    branchStockQuantity,
-                    expiryDate || null,
-                    branchIsAvailable
-                ]);
-                
-                console.log(`✅ Updated branch ${targetBranchId}: price=${branchPrice}, stock=${branchStockQuantity}, available=${branchIsAvailable}`);
-            }
-            console.log(`✅ Product ${req.params.id} updated in ${targetBranchIds.length} branches`);
+        // Update branch inventory if price provided
+        if (price !== undefined && branchId) {
+            const bpSql = `
+                INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
+                VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+                ON CONFLICT (branch_id, product_id) DO UPDATE SET
+                    price = EXCLUDED.price,
+                    discount_price = EXCLUDED.discount_price,
+                    stock_quantity = EXCLUDED.stock_quantity,
+                    expiry_date = EXCLUDED.expiry_date
+            `;
+            await query(bpSql, [
+                branchId,
+                req.params.id,
+                price,
+                originalPrice || null,
+                stockQuantity || 0,
+                expiryDate || null
+            ]);
         }
 
         await query('COMMIT');
@@ -655,7 +596,6 @@ router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 });
-
 // Get Products by Category
 router.get('/category/:category', async (req, res) => {
     const { branchId } = req.query;
@@ -681,6 +621,35 @@ router.get('/category/:category', async (req, res) => {
     }
 });
 
+// Search Products
+router.get('/search', async (req, res) => {
+    const { q, branchId } = req.query;
+
+    if (!q) {
+        return res.status(400).json({ error: "Search query required" });
+    }
+
+    if (!branchId) {
+        return res.status(400).json({ error: "Branch ID required" });
+    }
+
+    try {
+        const sql = `
+            SELECT p.*, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
+            FROM products p
+            JOIN branch_products bp ON p.id = bp.product_id
+            WHERE bp.branch_id = $1 
+            AND (p.name ILIKE $2 OR p.description ILIKE $2 OR p.barcode ILIKE $2)
+            AND bp.is_available = TRUE
+        `;
+        const { rows } = await query(sql, [branchId, `%${q}%`]);
+        
+        res.json({ message: 'success', data: rows });
+    } catch (err) {
+        console.error("Error searching products:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
 // Delete Product
 router.delete('/:id', [verifyToken, isAdmin], async (req, res) => {
     try {
@@ -712,6 +681,7 @@ router.post('/upload', [verifyToken, isAdmin, secureExcelUpload.single('file'), 
 
         let successCount = 0;
         let errorCount = 0;
+        const categoryIndex = await buildCategoryIndex();
 
         // Start transaction
         await query('BEGIN');
@@ -727,13 +697,15 @@ router.post('/upload', [verifyToken, isAdmin, secureExcelUpload.single('file'), 
                 const isOrganic = p.isOrganic === 'true' || p.isOrganic === 1 || p.isOrganic === true;
                 const isNew = p.isNew === 'true' || p.isNew === 1 || p.isNew === true;
                 const barcode = p.barcode || p.parcode || null; // Support both spellings
-                const subcategory = p.subcategory || p["التصنيف الفرعي"] || null;
-                const category = p.category || p["التصنيف الاساسي"] || 'Uncategorized';
-                const brandId = p.brand_id || p.brandId || p["البراند"] || null;
+                const rawSubcategory = p.subcategory || p["التصنيف الفرعي"] || null;
+                const rawCategory = p.category || p["التصنيف الاساسي"] || p["التصنيف الأساسي"] || null;
+                const mappedCategory = mapCategoryValues(rawCategory, rawSubcategory, categoryIndex);
+                const category = mappedCategory.category || rawCategory || 'Uncategorized';
+                const subcategory = mappedCategory.subcategory || rawSubcategory || null;
 
                 const sql = `
-                    INSERT INTO products (id, name, category, subcategory, image, weight, rating, reviews, is_organic, is_new, barcode, brand_id)
-                    VALUES ($1, $2, $3, $4, $5, $6, 0, 0, $7, $8, $9, $10)
+                    INSERT INTO products (id, name, category, subcategory, image, weight, rating, reviews, is_organic, is_new, barcode)
+                    VALUES ($1, $2, $3, $4, $5, $6, 0, 0, $7, $8, $9)
                     ON CONFLICT (id) DO UPDATE SET
                         name = EXCLUDED.name,
                         category = EXCLUDED.category,
@@ -742,8 +714,7 @@ router.post('/upload', [verifyToken, isAdmin, secureExcelUpload.single('file'), 
                         weight = EXCLUDED.weight,
                         is_organic = EXCLUDED.is_organic,
                         is_new = EXCLUDED.is_new,
-                        barcode = EXCLUDED.barcode,
-                        brand_id = EXCLUDED.brand_id
+                        barcode = EXCLUDED.barcode
                 `;
 
                 await query(sql, [
@@ -755,8 +726,7 @@ router.post('/upload', [verifyToken, isAdmin, secureExcelUpload.single('file'), 
                     p.weight || '',
                     isOrganic,
                     isNew,
-                    barcode,
-                    brandId
+                    barcode
                 ]);
 
                 // If branch and price info provided, also add to branch_products
