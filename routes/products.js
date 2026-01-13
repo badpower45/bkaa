@@ -186,29 +186,58 @@ router.get('/', async (req, res) => {
     // For admin panel - show all products with their branch data
     if (includeAllBranches === 'true') {
         try {
+            const params = [];
+            let paramIndex = 1;
+            let categoryParamIndex;
+            let categoryCte = '';
+            let categoryJoin = '';
+
+            if (category && category !== 'All') {
+                categoryParamIndex = paramIndex;
+                categoryCte = `
+                WITH matched_category AS (
+                    SELECT c.*
+                    FROM categories c
+                    WHERE normalize_arabic_text(c.name) = normalize_arabic_text($${categoryParamIndex})
+                       OR normalize_arabic_text(c.name_ar) = normalize_arabic_text($${categoryParamIndex})
+                    LIMIT 1
+                )
+                `;
+                categoryJoin = 'LEFT JOIN matched_category c ON TRUE';
+                params.push(category);
+                paramIndex++;
+            }
+
             let sql = `
+                ${categoryCte}
                 SELECT DISTINCT ON (p.id) p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, 
                        p.is_organic, p.is_new, p.barcode, p.shelf_location, p.subcategory, p.description,
                        bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id,
                        (mo.id IS NOT NULL) AS in_magazine
                 FROM products p
                 LEFT JOIN branch_products bp ON p.id = bp.product_id
+                ${categoryJoin}
                 LEFT JOIN magazine_offers mo ON mo.product_id = p.id 
                     AND mo.is_active = TRUE 
                     AND (mo.start_date IS NULL OR mo.start_date <= NOW())
                     AND (mo.end_date IS NULL OR mo.end_date >= NOW())
                 WHERE 1=1
             `;
-            const params = [];
-            let paramIndex = 1;
 
-            if (category && category !== 'All') {
+            if (categoryParamIndex !== undefined) {
                 sql += ` AND (
-                    normalize_arabic_text(p.category) = normalize_arabic_text($${paramIndex})
-                    OR p.category = $${paramIndex}
+                    normalize_arabic_text(p.category) = normalize_arabic_text($${categoryParamIndex})
+                    OR p.category = $${categoryParamIndex}
+                    OR (
+                        c.id IS NOT NULL
+                        AND (
+                            normalize_arabic_text(p.category) = normalize_arabic_text(c.name)
+                            OR normalize_arabic_text(p.category) = normalize_arabic_text(c.name_ar)
+                            OR p.category = c.name
+                            OR p.category = c.name_ar
+                        )
+                    )
                 )`;
-                params.push(category);
-                paramIndex++;
             }
 
             if (search) {
@@ -247,28 +276,57 @@ router.get('/', async (req, res) => {
         // Add cache headers for better performance
         res.set('Cache-Control', 'public, max-age=60'); // Cache for 1 minute
         
+        const params = [branchId];
+        let paramIndex = 2;
+        let categoryParamIndex;
+        let categoryCte = '';
+        let categoryJoin = '';
+
+        if (category && category !== 'All') {
+            categoryParamIndex = paramIndex;
+            categoryCte = `
+            WITH matched_category AS (
+                SELECT c.*
+                FROM categories c
+                WHERE normalize_arabic_text(c.name) = normalize_arabic_text($${categoryParamIndex})
+                   OR normalize_arabic_text(c.name_ar) = normalize_arabic_text($${categoryParamIndex})
+                LIMIT 1
+            )
+            `;
+            categoryJoin = 'LEFT JOIN matched_category c ON TRUE';
+            params.push(category);
+            paramIndex++;
+        }
+
         let sql = `
+            ${categoryCte}
             SELECT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, p.is_organic, p.is_new, p.barcode, p.shelf_location,
                    bp.price, bp.discount_price, bp.stock_quantity, bp.is_available,
                    (mo.id IS NOT NULL) AS in_magazine
         FROM products p
             JOIN branch_products bp ON p.id = bp.product_id
+            ${categoryJoin}
             LEFT JOIN magazine_offers mo ON mo.product_id = p.id 
                 AND mo.is_active = TRUE 
                 AND (mo.start_date IS NULL OR mo.start_date <= NOW())
                 AND (mo.end_date IS NULL OR mo.end_date >= NOW())
             WHERE bp.branch_id = $1 AND bp.is_available = TRUE
         `;
-        const params = [branchId];
-        let paramIndex = 2;
 
-        if (category && category !== 'All') {
+        if (categoryParamIndex !== undefined) {
             sql += ` AND (
-                normalize_arabic_text(p.category) = normalize_arabic_text($${paramIndex})
-                OR p.category = $${paramIndex}
+                normalize_arabic_text(p.category) = normalize_arabic_text($${categoryParamIndex})
+                OR p.category = $${categoryParamIndex}
+                OR (
+                    c.id IS NOT NULL
+                    AND (
+                        normalize_arabic_text(p.category) = normalize_arabic_text(c.name)
+                        OR normalize_arabic_text(p.category) = normalize_arabic_text(c.name_ar)
+                        OR p.category = c.name
+                        OR p.category = c.name_ar
+                    )
+                )
             )`;
-            params.push(category);
-            paramIndex++;
         }
 
         if (search) {
@@ -613,10 +671,30 @@ router.get('/category/:category', async (req, res) => {
 
     try {
         const sql = `
+            WITH matched_category AS (
+                SELECT c.*
+                FROM categories c
+                WHERE normalize_arabic_text(c.name) = normalize_arabic_text($2)
+                   OR normalize_arabic_text(c.name_ar) = normalize_arabic_text($2)
+                LIMIT 1
+            )
             SELECT p.*, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
             FROM products p
             JOIN branch_products bp ON p.id = bp.product_id
-            WHERE bp.branch_id = $1 AND p.category = $2 AND bp.is_available = TRUE
+            LEFT JOIN matched_category c ON TRUE
+            WHERE bp.branch_id = $1 AND bp.is_available = TRUE AND (
+                normalize_arabic_text(p.category) = normalize_arabic_text($2)
+                OR p.category = $2
+                OR (
+                    c.id IS NOT NULL
+                    AND (
+                        normalize_arabic_text(p.category) = normalize_arabic_text(c.name)
+                        OR normalize_arabic_text(p.category) = normalize_arabic_text(c.name_ar)
+                        OR p.category = c.name
+                        OR p.category = c.name_ar
+                    )
+                )
+            )
         `;
         const { rows } = await query(sql, [branchId, category]);
         
