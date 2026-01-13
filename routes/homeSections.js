@@ -3,6 +3,17 @@ import { query } from '../database.js';
 
 const router = express.Router();
 
+const normalizeCategoryValue = (value = '') =>
+    value
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/أ|إ|آ/g, 'ا')
+        .replace(/ة/g, 'ه')
+        .replace(/ى/g, 'ي')
+        .replace(/\s+/g, '')
+        .replace(/[-_]/g, '');
+
 // ============================================
 // GET all active home sections with products
 // ============================================
@@ -32,35 +43,64 @@ router.get('/', async (req, res) => {
                 try {
                     console.log(`🔍 Fetching products for section "${section.section_name_ar}" - Category: ${section.category}, Max: ${section.max_products}`);
                     
-                    // First, check what categories exist in products table
-                    const categoriesCheckQuery = `SELECT DISTINCT category FROM products LIMIT 20`;
-                    const categoriesCheck = await query(categoriesCheckQuery);
-                    console.log(`📊 Available categories in products table:`, categoriesCheck.rows.map(r => r.category));
-                    
-                    // Try multiple variations to find the matching category
-                    // Match against both products.category and categories.name/name_ar
+                    const categoryCandidates = [
+                        section.category,
+                        section.section_name_ar,
+                        section.section_name
+                    ]
+                        .filter(Boolean)
+                        .map((value) => value.toString().trim())
+                        .filter((value, index, self) => self.indexOf(value) === index);
+
+                    const normalizedCandidates = categoryCandidates.map(normalizeCategoryValue).filter(Boolean);
+                    const hasCandidates = normalizedCandidates.length > 0;
+
+                    const categoryFilter = hasCandidates
+                        ? normalizedCandidates
+                            .map((_, idx) => `
+                                normalize_arabic_text(p.category) = normalize_arabic_text($${idx + 1})
+                                OR p.category = $${idx + 1}
+                            `)
+                            .join(' OR ')
+                        : 'TRUE';
+
+                    const categoryMatchFilter = hasCandidates
+                        ? normalizedCandidates
+                            .map((_, idx) => `
+                                normalize_arabic_text(c.name) = normalize_arabic_text($${idx + 1})
+                                OR normalize_arabic_text(c.name_ar) = normalize_arabic_text($${idx + 1})
+                            `)
+                            .join(' OR ')
+                        : 'FALSE';
+
                     let productsQuery = `
+                        WITH matched_category AS (
+                            SELECT c.*
+                            FROM categories c
+                            WHERE ${categoryMatchFilter}
+                            LIMIT 1
+                        )
                         SELECT DISTINCT ON (p.id) 
                             p.id, p.name, p.category, p.image, p.rating, p.reviews,
                             p.is_organic, p.is_new, p.description, p.weight, p.barcode,
                             bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
                         FROM products p
                         LEFT JOIN branch_products bp ON p.id = bp.product_id
-                        LEFT JOIN categories c ON (p.category = c.name OR p.category = c.name_ar)
+                        LEFT JOIN matched_category c ON TRUE
                         WHERE (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
                         AND (
-                            p.category = $1 
-                            OR TRIM(LOWER(p.category)) = TRIM(LOWER($1))
-                            OR p.category LIKE $1
-                            OR p.category LIKE '%' || $1 || '%'
-                            OR c.name = $1
-                            OR c.name_ar = $1
-                            OR TRIM(LOWER(c.name)) = TRIM(LOWER($1))
-                            OR TRIM(LOWER(c.name_ar)) = TRIM(LOWER($1))
+                            ${categoryFilter}
+                            OR (
+                                c.id IS NOT NULL
+                                AND (
+                                    normalize_arabic_text(p.category) = normalize_arabic_text(c.name)
+                                    OR normalize_arabic_text(p.category) = normalize_arabic_text(c.name_ar)
+                                )
+                            )
                         )
                     `;
 
-                    const params = [section.category];
+                    const params = hasCandidates ? categoryCandidates : [section.category];
 
                     if (branchId) {
                         productsQuery += ` AND bp.branch_id = $${params.length + 1} AND bp.is_available = true`;
@@ -70,7 +110,7 @@ router.get('/', async (req, res) => {
                     productsQuery += ` ORDER BY p.is_new DESC, p.id DESC LIMIT $${params.length + 1}`;
                     params.push(section.max_products || 8);
 
-                    console.log(`🔎 Searching for category: "${section.category}" with multiple matching strategies`);
+                    console.log(`🔎 Searching for category candidates:`, categoryCandidates);
                     console.log(`🔎 Query params:`, params);
                     console.log(`🔎 SQL Query:`, productsQuery.replace(/\s+/g, ' ').trim());
                     
