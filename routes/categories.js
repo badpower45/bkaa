@@ -175,11 +175,14 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Name is required' });
         }
         
+        // إذا لم يتم تحديد parent_id، يكون null (تصنيف أب)
+        const finalParentId = parent_id !== undefined && parent_id !== '' ? parent_id : null;
+        
         const result = await pool.query(`
             INSERT INTO categories (name, name_ar, image, icon, bg_color, description, parent_id, display_order, is_active)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
-        `, [name, name_ar || name, image, icon, bg_color, description, parent_id, display_order, is_active]);
+        `, [name, name_ar || name, image, icon, bg_color, description, finalParentId, display_order, is_active]);
         
         res.json({ success: true, data: result.rows[0] });
     } catch (error) {

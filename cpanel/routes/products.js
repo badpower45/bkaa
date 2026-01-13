@@ -201,7 +201,7 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
     try {
         await query('BEGIN');
 
-        // Insert product
+        // Insert product - التصنيف يجب أن يكون اسم التصنيف (name أو name_ar)
         const sql = `
             INSERT INTO products (id, name, category, subcategory, image, weight, description, rating, reviews, is_organic, is_new, barcode)
             VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, $8, $9, $10)
@@ -210,8 +210,8 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
         const { rows } = await query(sql, [
             id,
             name,
-            category,
-            subcategory || null,
+            category || 'أخرى', // التصنيف الأساسي
+            subcategory || null, // التصنيف الفرعي (اختياري)
             image,
             weight,
             description,
