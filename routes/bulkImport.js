@@ -280,7 +280,15 @@ function mapRowToProduct(row, rowIndex) {
         }
     }
     
-    // Normalize brand fields
+    // Normalize brand fields + fallback: any header containing "brand"
+    if (!product.brand && !product.brand_name) {
+        for (const [k, v] of rowLookup.entries()) {
+            if (k.includes('brand') && v) {
+                product.brand = v;
+                break;
+            }
+        }
+    }
     if (product.brand) {
         const b = String(product.brand).trim();
         product.brand = b || null;
