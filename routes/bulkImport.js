@@ -211,7 +211,7 @@ const COLUMN_MAPPING = {
     'image': ['image', 'image_url', 'Main Image', 'Image URL', 'Image Url', 'الصورة', 'صورة', 'صوره', 'Image', 'لينك الصوره'],
     'expiry_date': ['expiry_date', 'expiryDate', 'Expiry Date', 'Expiration Date', 'تاريخ الصلاحيه', 'تاريخ الصلاحية', 'صلاحيه', 'صلاحية', 'Expiry'],
     'brand': [
-        'brand', 'brand_name', 'brandname', 'Brand Name', 'Brand name', 'brand id', 'brand_id', 'BrandId', 'Brand',
+        'brand', 'brand_name', 'brandname', 'brand name', 'Brand Name', 'Brand name', 'brand id', 'brand_id', 'BrandId', 'Brand',
         'البراند', 'الماركة', 'الماركه', 'براند', 'اسم البراند', 'براند المنتج', 'العلامة التجارية', 'العلامه التجاريه', 'العلامة التجاريه', 'العلامة',
         'الماركة التجارية', 'الاسم التجاري', 'الاسم التجارى', 'ماركة', 'ماركه', 'براند المنتج',
         'company', 'المصنع', 'المُصنِّع', 'المصنّع'
@@ -285,7 +285,8 @@ function mapRowToProduct(row, rowIndex) {
     if (!product.brand && !product.brand_name) {
         for (const [k, v] of rowLookup.entries()) {
             if (!v) continue;
-            if (k.includes('brand')) {
+            const keyNoSpace = k.replace(/\s+/g, '');
+            if (k.includes('brand') || keyNoSpace.includes('brand')) {
                 product.brand = v;
                 break;
             }
