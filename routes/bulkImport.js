@@ -211,9 +211,10 @@ const COLUMN_MAPPING = {
     'image': ['image', 'image_url', 'Main Image', 'Image URL', 'Image Url', 'الصورة', 'صورة', 'صوره', 'Image', 'لينك الصوره'],
     'expiry_date': ['expiry_date', 'expiryDate', 'Expiry Date', 'Expiration Date', 'تاريخ الصلاحيه', 'تاريخ الصلاحية', 'صلاحيه', 'صلاحية', 'Expiry'],
     'brand': [
-        'brand', 'brand_name', 'Brand Name', 'brand_id', 'BrandName', 'Brand name',
-        'البراند', 'الماركة', 'العلامة التجارية', 'اسم البراند', 'براند', 'ماركة', 'الماركه', 'براند المنتج',
-        'company', 'المصنع', 'المُصنِّع'
+        'brand', 'brand_name', 'brandname', 'Brand Name', 'Brand name', 'brand id', 'brand_id', 'BrandId', 'Brand',
+        'البراند', 'الماركة', 'الماركه', 'براند', 'اسم البراند', 'براند المنتج', 'العلامة التجارية', 'العلامه التجاريه', 'العلامة التجاريه', 'العلامة',
+        'الماركة التجارية', 'الاسم التجاري', 'الاسم التجارى', 'ماركة', 'ماركه', 'براند المنتج',
+        'company', 'المصنع', 'المُصنِّع', 'المصنّع'
     ]
 };
 
@@ -280,10 +281,15 @@ function mapRowToProduct(row, rowIndex) {
         }
     }
     
-    // Normalize brand fields + fallback: any header containing "brand"
+    // Normalize brand fields + fallback: any header containing brand / Arabic synonyms
     if (!product.brand && !product.brand_name) {
         for (const [k, v] of rowLookup.entries()) {
-            if (k.includes('brand') && v) {
+            if (!v) continue;
+            if (k.includes('brand')) {
+                product.brand = v;
+                break;
+            }
+            if (k.includes('مارك') || k.includes('براند') || k.includes('علام') || k.includes('تجاري')) {
                 product.brand = v;
                 break;
             }
