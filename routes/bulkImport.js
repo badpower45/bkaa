@@ -26,8 +26,17 @@ const upload = multer({
             'application/vnd.ms-excel', // .xls
             'text/csv'
         ];
-        
-        if (allowedTypes.includes(file.mimetype)) {
+
+        const originalName = (file.originalname || '').toLowerCase();
+        const hasValidExtension =
+            originalName.endsWith('.xlsx') ||
+            originalName.endsWith('.xls') ||
+            originalName.endsWith('.csv');
+
+        // Some clients send a generic MIME type (e.g. application/octet-stream) for uploads.
+        const hasValidMime = allowedTypes.includes(file.mimetype);
+
+        if (hasValidMime || hasValidExtension) {
             cb(null, true);
         } else {
             cb(new Error('Invalid file type. Only Excel and CSV files are allowed.'));
@@ -54,9 +63,19 @@ const COLUMN_MAPPING = {
 // Find column value by multiple possible names
 function findColumnValue(row, possibleNames) {
     for (const name of possibleNames) {
-        const lowerName = name.toLowerCase();
+        const lowerName = name.toLowerCase().trim();
         for (const [key, value] of Object.entries(row)) {
-            if (key.toLowerCase() === lowerName && value !== undefined && value !== null && value !== '') {
+            const cleanKey = key.toLowerCase().trim();
+            if (cleanKey === lowerName && value !== undefined && value !== null && value !== '') {
+                // Clean the value
+                if (typeof value === 'string') {
+                    const trimmed = value.trim();
+                    // Return null for empty strings or placeholder values
+                    if (trimmed === '' || trimmed === '-' || trimmed === 'N/A' || trimmed === 'null') {
+                        return null;
+                    }
+                    return trimmed;
+                }
                 return value;
             }
         }
@@ -240,10 +259,20 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
         console.log('Sheet range:', worksheet['!ref']);
         console.log('Has data beyond header:', hasData);
         
-        // Convert to JSON - include header even if empty
-        const rows = xlsx.utils.sheet_to_json(worksheet, { defval: null });
+        // Convert to JSON - include header even if empty, and be very lenient
+        const rows = xlsx.utils.sheet_to_json(worksheet, { 
+            defval: null,
+            raw: false, // Convert all values to strings first
+            blankrows: false // Skip completely empty rows
+        });
         
         console.log('Parsed rows:', rows.length);
+        
+        // Log first row to see column names
+        if (rows.length > 0) {
+            console.log('📋 First row columns:', Object.keys(rows[0]));
+            console.log('📋 First row sample:', rows[0]);
+        }
         
         if (rows.length === 0) {
             // Check if headers exist
