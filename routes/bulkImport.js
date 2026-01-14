@@ -159,6 +159,22 @@ const ensureBrand = async (brandName, brandIndex) => {
     return null;
 };
 
+const resolveProductIdCandidate = async (barcode) => {
+    if (!barcode) {
+        return null;
+    }
+    const candidate = String(barcode).trim();
+    if (!candidate) {
+        return null;
+    }
+
+    const { rows } = await query('SELECT id FROM products WHERE id = $1 LIMIT 1', [candidate]);
+    if (rows.length > 0) {
+        return null;
+    }
+    return candidate;
+};
+
 // Column mapping (support both English and Arabic names)
 const COLUMN_MAPPING = {
     // Required fields
@@ -766,6 +782,7 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                     
                     let publishedCount = 0;
                     const publishErrors = [];
+                    const successDraftIds = [];
                     const brandIndex = await buildBrandIndex();
                     
                     for (const draft of draftsResult.rows) {
@@ -814,6 +831,7 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                                 ]);
                             } else {
                                 // Insert new - generate ID from barcode or sequence
+                                const productIdCandidate = await resolveProductIdCandidate(draft.barcode);
                                 const newProduct = await query(`
                                     INSERT INTO products (
                                         id, name, barcode, category, subcategory, image, brand_id
@@ -823,7 +841,7 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                                     )
                                     RETURNING id
                                 `, [
-                                    draft.barcode, draft.name, draft.barcode,
+                                    productIdCandidate, draft.name, draft.barcode,
                                     draft.category, draft.subcategory, draft.image,
                                     brandId
                                 ]);
@@ -876,6 +894,7 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                             }
                             
                             publishedCount++;
+                            successDraftIds.push(draft.id);
                         } catch (error) {
                             console.error(`Error publishing draft ${draft.id}:`, error);
                             publishErrors.push({
@@ -885,11 +904,12 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                         }
                     }
                     
-                    // Delete drafts after publishing
-                    await query(
-                        'DELETE FROM draft_products WHERE import_batch_id = $1',
-                        [batchId]
-                    );
+                    if (successDraftIds.length > 0) {
+                        await query(
+                            'DELETE FROM draft_products WHERE id = ANY($1::int[])',
+                            [successDraftIds]
+                        );
+                    }
                     
                     console.log(`Auto-published ${publishedCount} products`);
                     
@@ -1267,6 +1287,7 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
         
         let successCount = 0;
         let publishErrors = [];
+        const successDraftIds = [];
         const brandIndex = await buildBrandIndex();
         
         // Process each draft product
@@ -1320,6 +1341,7 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
                     ]);
                 } else {
                     // Insert new product - generate ID from barcode or sequence
+                    const productIdCandidate = await resolveProductIdCandidate(draft.barcode);
                     const newProduct = await query(`
                         INSERT INTO products (
                             id, name, barcode, category, subcategory, image, brand_id
@@ -1329,7 +1351,7 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
                         )
                         RETURNING id
                     `, [
-                        draft.barcode,
+                        productIdCandidate,
                         draft.name,
                         draft.barcode,
                         draft.category,
@@ -1381,6 +1403,7 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
                 }
                 
                 successCount++;
+                successDraftIds.push(draft.id);
             } catch (error) {
                 console.error(`Error publishing draft ${draft.id}:`, error);
                 publishErrors.push({
@@ -1391,11 +1414,12 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
             }
         }
         
-        // Delete all draft products from this batch
-        await query(
-            'DELETE FROM draft_products WHERE import_batch_id = $1',
-            [batchId]
-        );
+        if (successDraftIds.length > 0) {
+            await query(
+                'DELETE FROM draft_products WHERE id = ANY($1::int[])',
+                [successDraftIds]
+            );
+        }
         
         await query('COMMIT');
         

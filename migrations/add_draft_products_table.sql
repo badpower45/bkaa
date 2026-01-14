@@ -48,6 +48,7 @@ DECLARE
     v_product_id TEXT;
     v_existing_id TEXT;
     v_brand_id INTEGER;
+    v_product_id_candidate TEXT;
     v_draft RECORD;
 BEGIN
     -- Get draft product
@@ -99,11 +100,17 @@ BEGIN
             brand_id = COALESCE(v_brand_id, brand_id)
         WHERE id = v_product_id;
     ELSE
+        v_product_id_candidate := NULL;
+        IF v_draft.barcode IS NOT NULL AND TRIM(v_draft.barcode) <> '' THEN
+            IF NOT EXISTS (SELECT 1 FROM products WHERE id = TRIM(v_draft.barcode)) THEN
+                v_product_id_candidate := TRIM(v_draft.barcode);
+            END IF;
+        END IF;
         -- Insert into products table
         INSERT INTO products (
             id, name, category, subcategory, image, barcode, brand_id
         ) VALUES (
-            COALESCE(NULLIF(TRIM(v_draft.barcode), ''), (SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) + 1 FROM products WHERE id ~ '^[0-9]+$')::TEXT),
+            COALESCE(v_product_id_candidate, (SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) + 1 FROM products WHERE id ~ '^[0-9]+$')::TEXT),
             v_draft.name,
             COALESCE(v_draft.category, 'Uncategorized'),
             v_draft.subcategory,

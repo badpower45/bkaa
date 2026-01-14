@@ -25,16 +25,15 @@ const upload = multer({
         // ✅ Security: Strict file type checking
         const allowedMimes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp', 'image/gif'];
         
-        if (!allowedMimes.includes(file.mimetype)) {
-            return cb(new Error('نوع الملف غير مسموح. فقط صور JPEG, PNG, WEBP, GIF'));
-        }
+        const hasValidMime = allowedMimes.includes(file.mimetype);
         
-        // ✅ Security: Check file extension
+        // ✅ Security: Check file extension (fallback if MIME is missing)
         const allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
         const fileExtension = file.originalname.toLowerCase().slice(file.originalname.lastIndexOf('.'));
+        const hasValidExtension = allowedExtensions.includes(fileExtension);
         
-        if (!allowedExtensions.includes(fileExtension)) {
-            return cb(new Error('امتداد الملف غير صالح'));
+        if (!hasValidMime && !hasValidExtension) {
+            return cb(new Error('نوع الملف غير مسموح. فقط صور JPEG, PNG, WEBP, GIF'));
         }
         
         cb(null, true);
