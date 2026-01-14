@@ -38,9 +38,16 @@ CREATE INDEX IF NOT EXISTS idx_draft_products_status ON draft_products(status);
 CREATE INDEX IF NOT EXISTS idx_draft_products_batch ON draft_products(import_batch_id);
 CREATE INDEX IF NOT EXISTS idx_draft_products_imported_by ON draft_products(imported_by);
 
--- Drop old function signature before redefining (return type changed)
-DROP FUNCTION IF EXISTS publish_draft_product(INTEGER);
-DROP FUNCTION IF EXISTS publish_draft_product(TEXT);
+-- Drop ALL existing versions of the function (regardless of signature)
+DROP FUNCTION IF EXISTS publish_draft_product(INTEGER) CASCADE;
+DROP FUNCTION IF EXISTS publish_draft_product(TEXT) CASCADE;
+-- Alternative drop to catch any lingering versions
+DO $$ 
+BEGIN
+    EXECUTE 'DROP FUNCTION IF EXISTS publish_draft_product CASCADE';
+EXCEPTION WHEN OTHERS THEN
+    NULL; -- Ignore errors if function doesn't exist
+END $$;
 
 -- Function to publish draft product to main products table
 CREATE OR REPLACE FUNCTION publish_draft_product(draft_id TEXT)
@@ -150,7 +157,7 @@ BEGIN
     END IF;
     
     -- Delete draft product
-    DELETE FROM draft_products WHERE id = draft_id;
+    DELETE FROM draft_products WHERE id::text = draft_id;
     
     RETURN QUERY SELECT v_product_id, TRUE, 'Product published successfully';
 END;
