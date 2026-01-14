@@ -1294,22 +1294,101 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
 
         const publishResults = [];
         
-        // Publish each draft directly (without using the problematic function)
+        // Publish each draft using DIRECT SQL (bypass function issues)
         for (const draft of drafts) {
             try {
-                // Call the function properly with string cast
-                const { rows: funcResult } = await query(
-                    'SELECT * FROM publish_draft_product($1::text)',
-                    [draft.id.toString()]
-                );
+                let productId = null;
+                
+                // Check if product already exists by barcode
+                if (draft.barcode) {
+                    const { rows: existingProduct } = await query(
+                        'SELECT id FROM products WHERE barcode = $1 LIMIT 1',
+                        [draft.barcode]
+                    );
+                    if (existingProduct.length > 0) {
+                        productId = existingProduct[0].id;
+                    }
+                }
+                
+                // Get or create brand
+                let brandId = null;
+                if (draft.brand_name) {
+                    const { rows: existingBrand } = await query(
+                        'SELECT id FROM brands WHERE LOWER(name_ar) = LOWER($1) OR LOWER(name_en) = LOWER($1) LIMIT 1',
+                        [draft.brand_name]
+                    );
+                    if (existingBrand.length > 0) {
+                        brandId = existingBrand[0].id;
+                    } else {
+                        const { rows: newBrand } = await query(
+                            'INSERT INTO brands (name_ar, name_en) VALUES ($1, $1) RETURNING id',
+                            [draft.brand_name]
+                        );
+                        brandId = newBrand[0].id;
+                    }
+                }
+                
+                // Update or insert product
+                if (productId) {
+                    // Update existing product
+                    await query(`
+                        UPDATE products SET
+                            name = COALESCE($1, name),
+                            category = COALESCE($2, category),
+                            subcategory = COALESCE($3, subcategory),
+                            image = COALESCE($4, image),
+                            barcode = COALESCE($5, barcode),
+                            brand_id = COALESCE($6, brand_id)
+                        WHERE id = $7
+                    `, [draft.name, draft.category, draft.subcategory, draft.image, draft.barcode, brandId, productId]);
+                } else {
+                    // Insert new product
+                    const newProductId = draft.barcode || 
+                        (await query("SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) + 1 FROM products WHERE id ~ '^[0-9]+$'")).rows[0].coalesce.toString();
+                    
+                    const { rows: insertedProduct } = await query(`
+                        INSERT INTO products (id, name, category, subcategory, image, barcode, brand_id)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        RETURNING id
+                    `, [newProductId, draft.name, draft.category || 'Uncategorized', draft.subcategory, draft.image, draft.barcode, brandId]);
+                    
+                    productId = insertedProduct[0].id;
+                }
+                
+                // Insert/Update branch_products
+                if (draft.branch_id && draft.price) {
+                    const { rows: existingBranchProduct } = await query(
+                        'SELECT 1 FROM branch_products WHERE branch_id = $1 AND product_id = $2',
+                        [draft.branch_id, productId]
+                    );
+                    
+                    if (existingBranchProduct.length > 0) {
+                        await query(`
+                            UPDATE branch_products SET
+                                price = COALESCE($1, price),
+                                discount_price = COALESCE($2, discount_price),
+                                stock_quantity = COALESCE($3, stock_quantity),
+                                expiry_date = COALESCE($4, expiry_date)
+                            WHERE branch_id = $5 AND product_id = $6
+                        `, [draft.price, draft.old_price, draft.stock_quantity, draft.expiry_date, draft.branch_id, productId]);
+                    } else {
+                        await query(`
+                            INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
+                            VALUES ($1, $2, $3, $4, $5, $6, true)
+                        `, [draft.branch_id, productId, draft.price, draft.old_price, draft.stock_quantity || 0, draft.expiry_date]);
+                    }
+                }
+                
+                // Delete draft
+                await query('DELETE FROM draft_products WHERE id = $1', [draft.id]);
                 
                 publishResults.push({
                     draft_id: draft.id,
                     name: draft.name,
                     barcode: draft.barcode,
-                    success: funcResult[0]?.success || false,
-                    product_id: funcResult[0]?.product_id,
-                    message: funcResult[0]?.message
+                    success: true,
+                    product_id: productId,
+                    message: 'Published successfully'
                 });
             } catch (err) {
                 console.error(`Error publishing draft ${draft.id}:`, err.message);
