@@ -40,9 +40,10 @@ CREATE INDEX IF NOT EXISTS idx_draft_products_imported_by ON draft_products(impo
 
 -- Drop old function signature before redefining (return type changed)
 DROP FUNCTION IF EXISTS publish_draft_product(INTEGER);
+DROP FUNCTION IF EXISTS publish_draft_product(TEXT);
 
 -- Function to publish draft product to main products table
-CREATE OR REPLACE FUNCTION publish_draft_product(draft_id INTEGER)
+CREATE OR REPLACE FUNCTION publish_draft_product(draft_id TEXT)
 RETURNS TABLE(product_id TEXT, success BOOLEAN, message TEXT) AS $$
 DECLARE
     v_product_id TEXT;
@@ -52,7 +53,7 @@ DECLARE
     v_draft RECORD;
 BEGIN
     -- Get draft product
-    SELECT * INTO v_draft FROM draft_products WHERE id = draft_id;
+    SELECT * INTO v_draft FROM draft_products WHERE id::text = draft_id;
     
     IF NOT FOUND THEN
         RETURN QUERY SELECT NULL::TEXT, FALSE, 'Draft product not found';
@@ -82,7 +83,7 @@ BEGIN
 
     -- Find existing product by barcode or name
     IF v_draft.barcode IS NOT NULL AND TRIM(v_draft.barcode) <> '' THEN
-        SELECT id INTO v_existing_id FROM products WHERE barcode = v_draft.barcode LIMIT 1;
+        SELECT id INTO v_existing_id FROM products WHERE barcode::text = TRIM(v_draft.barcode) LIMIT 1;
     END IF;
 
     IF v_existing_id IS NULL AND v_draft.name IS NOT NULL AND TRIM(v_draft.name) <> '' THEN
@@ -102,7 +103,7 @@ BEGIN
     ELSE
         v_product_id_candidate := NULL;
         IF v_draft.barcode IS NOT NULL AND TRIM(v_draft.barcode) <> '' THEN
-            IF NOT EXISTS (SELECT 1 FROM products WHERE id = TRIM(v_draft.barcode)) THEN
+            IF NOT EXISTS (SELECT 1 FROM products WHERE id::text = TRIM(v_draft.barcode)) THEN
                 v_product_id_candidate := TRIM(v_draft.barcode);
             END IF;
         END IF;

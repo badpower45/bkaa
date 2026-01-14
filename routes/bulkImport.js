@@ -168,7 +168,7 @@ const resolveProductIdCandidate = async (barcode) => {
         return null;
     }
 
-    const { rows } = await query('SELECT id FROM products WHERE id = $1 LIMIT 1', [candidate]);
+    const { rows } = await query('SELECT id FROM products WHERE id::text = $1 LIMIT 1', [candidate]);
     if (rows.length > 0) {
         return null;
     }
@@ -791,7 +791,7 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                             let existingProduct = null;
                             if (draft.barcode) {
                                 const { rows } = await query(
-                                    'SELECT id FROM products WHERE barcode = $1 LIMIT 1',
+                                    'SELECT id FROM products WHERE barcode::text = $1 LIMIT 1',
                                     [draft.barcode]
                                 );
                                 if (rows.length > 0) {
@@ -1299,7 +1299,7 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
                 ORDER BY id
                 LIMIT $2
             ) dp
-            CROSS JOIN LATERAL publish_draft_product(dp.id) AS result
+            CROSS JOIN LATERAL publish_draft_product(dp.id::text) AS result
         `, [batchId, batchLimit]);
 
         const publishedCount = publishRows.filter(row => row.success).length;
