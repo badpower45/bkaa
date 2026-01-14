@@ -44,40 +44,137 @@ const upload = multer({
     }
 });
 
+const normalizeCategoryValue = (value = '') =>
+    value
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/أ|إ|آ/g, 'ا')
+        .replace(/ة/g, 'ه')
+        .replace(/ى/g, 'ي')
+        .replace(/\s+/g, '')
+        .replace(/[-_]/g, '');
+
+const buildCategoryIndex = async () => {
+    const { rows } = await query('SELECT id, name, name_ar, parent_id FROM categories');
+    const byId = new Map();
+    const rootMap = new Map();
+    const subMapByParent = new Map();
+    const subMapGlobal = new Map();
+
+    rows.forEach((row) => {
+        byId.set(row.id, row);
+        const keys = [row.name, row.name_ar].filter(Boolean).map(normalizeCategoryValue);
+        if (row.parent_id) {
+            const map = subMapByParent.get(row.parent_id) || new Map();
+            keys.forEach((key) => {
+                if (!map.has(key)) map.set(key, row);
+                if (!subMapGlobal.has(key)) subMapGlobal.set(key, row);
+            });
+            subMapByParent.set(row.parent_id, map);
+        } else {
+            keys.forEach((key) => {
+                if (!rootMap.has(key)) rootMap.set(key, row);
+            });
+        }
+    });
+
+    return { byId, rootMap, subMapByParent, subMapGlobal };
+};
+
+const mapCategoryValues = (rawCategory, rawSubcategory, categoryIndex) => {
+    const categoryKey = rawCategory ? normalizeCategoryValue(rawCategory) : '';
+    const subcategoryKey = rawSubcategory ? normalizeCategoryValue(rawSubcategory) : '';
+    const matchedCategory = categoryKey ? categoryIndex.rootMap.get(categoryKey) : null;
+    const subMap = matchedCategory ? categoryIndex.subMapByParent.get(matchedCategory.id) : null;
+    const matchedSubcategory = subcategoryKey
+        ? (matchedCategory ? subMap?.get(subcategoryKey) : null)
+        : null;
+    const fallbackSubcategory = !matchedCategory && !rawCategory && subcategoryKey
+        ? categoryIndex.subMapGlobal.get(subcategoryKey)
+        : null;
+    const finalSubcategory = matchedSubcategory || fallbackSubcategory;
+    const parentCategory = !matchedCategory && finalSubcategory?.parent_id
+        ? categoryIndex.byId.get(finalSubcategory.parent_id)
+        : null;
+
+    return {
+        category: (matchedCategory || parentCategory)?.name_ar || (matchedCategory || parentCategory)?.name || rawCategory || null,
+        subcategory: finalSubcategory?.name_ar || finalSubcategory?.name || rawSubcategory || null,
+        matchedCategory: Boolean(matchedCategory || parentCategory),
+        matchedSubcategory: Boolean(finalSubcategory),
+        categoryRow: matchedCategory || parentCategory || null,
+        subcategoryRow: finalSubcategory || null
+    };
+};
+
 // Column mapping (support both English and Arabic names)
 const COLUMN_MAPPING = {
     // Required fields
-    'name': ['name', 'product_name', 'اسم المنتج', 'الاسم', 'المنتج', 'اسم'],
+    'name': ['name', 'product_name', 'اسم المنتج', 'الاسم', 'المنتج', 'اسم', 'Name', 'Name (EN)'],
     'barcode': ['barcode', 'الباركود', 'باركود', 'Barcode'],
-    'old_price': ['old_price', 'originalPrice', 'السعر قبل', 'السعر القديم', 'سعر قبل', 'السعر الاصلي', 'discount_price'],
+    'old_price': [
+        'old_price',
+        'originalPrice',
+        'Original Price',
+        'Old Price',
+        'السعر قبل',
+        'السعر القديم',
+        'سعر قبل',
+        'السعر الاصلي',
+        'discount_price'
+    ],
     'price': ['price', 'السعر بعد', 'السعر', 'سعر بعد', 'سعر', 'Price', 'السعر الحالي'],
-    'category': ['category', 'التصنيف الاساسي', 'التصنيف الأساسي', 'القسم', 'الفئة', 'Category', 'التصنيف'],
-    'subcategory': ['subcategory', 'sub_category', 'التصنيف الثانوي', 'تصنيف ثانوي', 'Subcategory'],
-    'branch_id': ['branch_id', 'branchId', 'الفرع', 'فرع', 'معرف الفرع', 'Branch'],
-    'stock_quantity': ['stock_quantity', 'stockQuantity', 'الكمية', 'الكميه', 'كمية', 'كميه', 'Stock', 'عدد القطع المتوفره', 'المخزون'],
-    'image': ['image', 'image_url', 'الصورة', 'صورة', 'صوره', 'Image', 'لينك الصوره'],
-    'expiry_date': ['expiry_date', 'expiryDate', 'تاريخ الصلاحيه', 'تاريخ الصلاحية', 'صلاحيه', 'صلاحية', 'Expiry'],
-    'brand': ['brand', 'brand_name', 'brand_id', 'البراند', 'الماركة', 'اسم البراند', 'Brand']
+    'category': ['category', 'التصنيف الاساسي', 'التصنيف الأساسي', 'القسم', 'الفئة', 'Category', 'Category (EN)', 'التصنيف'],
+    'subcategory': ['subcategory', 'sub_category', 'التصنيف الثانوي', 'تصنيف ثانوي', 'Subcategory', 'Subcategory (EN)'],
+    'branch_id': ['branch_id', 'branchId', 'Branch ID', 'Branch Id', 'الفرع', 'فرع', 'معرف الفرع', 'Branch'],
+    'stock_quantity': [
+        'stock_quantity',
+        'stockQuantity',
+        'Total Stock',
+        'Stock Quantity',
+        'الكمية',
+        'الكميه',
+        'كمية',
+        'كميه',
+        'Stock',
+        'عدد القطع المتوفره',
+        'المخزون'
+    ],
+    'image': ['image', 'image_url', 'Main Image', 'Image URL', 'Image Url', 'الصورة', 'صورة', 'صوره', 'Image', 'لينك الصوره'],
+    'expiry_date': ['expiry_date', 'expiryDate', 'Expiry Date', 'Expiration Date', 'تاريخ الصلاحيه', 'تاريخ الصلاحية', 'صلاحيه', 'صلاحية', 'Expiry'],
+    'brand': ['brand', 'brand_name', 'Brand Name', 'brand_id', 'البراند', 'الماركة', 'اسم البراند', 'Brand']
+};
+
+const buildRowLookup = (row) => {
+    const lookup = new Map();
+    for (const [key, value] of Object.entries(row)) {
+        const cleanKey = key.toLowerCase().trim();
+        if (!cleanKey || cleanKey.startsWith('__empty')) {
+            continue;
+        }
+        if (value === undefined || value === null) {
+            continue;
+        }
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (trimmed === '' || trimmed === '-' || trimmed === 'N/A' || trimmed === 'null') {
+                continue;
+            }
+            lookup.set(cleanKey, trimmed);
+        } else {
+            lookup.set(cleanKey, value);
+        }
+    }
+    return lookup;
 };
 
 // Find column value by multiple possible names
-function findColumnValue(row, possibleNames) {
+function findColumnValue(rowLookup, possibleNames) {
     for (const name of possibleNames) {
         const lowerName = name.toLowerCase().trim();
-        for (const [key, value] of Object.entries(row)) {
-            const cleanKey = key.toLowerCase().trim();
-            if (cleanKey === lowerName && value !== undefined && value !== null && value !== '') {
-                // Clean the value
-                if (typeof value === 'string') {
-                    const trimmed = value.trim();
-                    // Return null for empty strings or placeholder values
-                    if (trimmed === '' || trimmed === '-' || trimmed === 'N/A' || trimmed === 'null') {
-                        return null;
-                    }
-                    return trimmed;
-                }
-                return value;
-            }
+        if (rowLookup.has(lowerName)) {
+            return rowLookup.get(lowerName);
         }
     }
     return null;
@@ -88,6 +185,7 @@ function mapRowToProduct(row, rowIndex) {
     const product = {};
     const errors = [];
     const warnings = [];
+    const rowLookup = buildRowLookup(row);
     
     // Required fields (but we'll be flexible)
     const allFields = [
@@ -98,7 +196,7 @@ function mapRowToProduct(row, rowIndex) {
     
     // Extract all available fields
     for (const field of allFields) {
-        let value = findColumnValue(row, COLUMN_MAPPING[field]);
+        let value = findColumnValue(rowLookup, COLUMN_MAPPING[field]);
         if (value || value === 0) {
             // Convert to string if needed (for barcode, name, category, etc.)
             if (['barcode', 'name', 'category', 'subcategory', 'image', 'brand'].includes(field) && typeof value === 'number') {
@@ -270,8 +368,10 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
         
         // Log first row to see column names
         if (rows.length > 0) {
-            console.log('📋 First row columns:', Object.keys(rows[0]));
-            console.log('📋 First row sample:', rows[0]);
+            const sampleColumns = Object.keys(rows[0])
+                .filter((key) => !key.toLowerCase().startsWith('__empty'))
+                .slice(0, 40);
+            console.log('📋 First row columns (sample):', sampleColumns);
         }
         
         if (rows.length === 0) {
@@ -304,13 +404,34 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
         // Generate batch ID for this import
         const batchId = uuidv4();
         const userId = req.user?.id || null;
+        let categoryIndex = await buildCategoryIndex();
         
         // Parse and save ALL rows as drafts (flexible approach)
         const savedDrafts = [];
         const parseErrors = [];
+        const missingRootCategories = new Map();
+        const missingSubcategories = [];
         
         rows.forEach((row, index) => {
             const { product, errors, warnings, rowIndex } = mapRowToProduct(row, index + 2);
+            const rawCategory = product.category || null;
+            const rawSubcategory = product.subcategory || null;
+            const mappedCategory = mapCategoryValues(rawCategory, rawSubcategory, categoryIndex);
+            product.category = mappedCategory.category;
+            product.subcategory = mappedCategory.subcategory;
+            if (rawCategory && !mappedCategory.matchedCategory) {
+                warnings.push(`التصنيف الأساسي غير مطابق: ${rawCategory}`);
+                missingRootCategories.set(normalizeCategoryValue(rawCategory), rawCategory);
+            }
+            if (rawSubcategory && !mappedCategory.matchedSubcategory && rawCategory) {
+                warnings.push(`التصنيف الفرعي غير مطابق: ${rawSubcategory}`);
+                missingSubcategories.push({
+                    parentKey: normalizeCategoryValue(rawCategory),
+                    parentName: rawCategory,
+                    subKey: normalizeCategoryValue(rawSubcategory),
+                    subName: rawSubcategory
+                });
+            }
             
             // Save even if there are warnings - we'll let user fix them later
             savedDrafts.push({
@@ -333,26 +454,7 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
         
         try {
             // First, create any new categories that don't exist
-            const existingCategories = new Set();
-            const categoriesResult = await query('SELECT name, name_ar FROM categories WHERE parent_id IS NULL');
-            categoriesResult.rows.forEach(cat => {
-                if (cat.name) existingCategories.add(cat.name.toLowerCase().trim());
-                if (cat.name_ar) existingCategories.add(cat.name_ar.toLowerCase().trim());
-            });
-            
-            // Collect unique categories from products
-            const categoriesToAdd = new Map();
-            for (const { product } of savedDrafts) {
-                if (product.category) {
-                    const normalized = product.category.toLowerCase().trim();
-                    if (!existingCategories.has(normalized) && !categoriesToAdd.has(normalized)) {
-                        categoriesToAdd.set(normalized, product.category);
-                    }
-                }
-            }
-            
-            // Insert new categories
-            for (const [normalized, originalName] of categoriesToAdd.entries()) {
+            for (const [normalized, originalName] of missingRootCategories.entries()) {
                 try {
                     console.log(`Creating new category: ${originalName}`);
                     const { rows: newCat } = await query(`
@@ -369,11 +471,56 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                     
                     if (newCat.length > 0) {
                         newCategories.push(newCat[0]);
-                        existingCategories.add(normalized);
                         console.log(`✅ Created category: ${originalName} (ID: ${newCat[0].id})`);
                     }
                 } catch (err) {
                     console.error(`Error creating category ${originalName}:`, err.message);
+                }
+            }
+
+            categoryIndex = await buildCategoryIndex();
+            const subcategoriesToAdd = new Map();
+
+            for (const entry of missingSubcategories) {
+                const parentRow = categoryIndex.rootMap.get(entry.parentKey);
+                if (!parentRow) {
+                    continue;
+                }
+                const subMap = categoryIndex.subMapByParent.get(parentRow.id);
+                if (subMap && subMap.has(entry.subKey)) {
+                    continue;
+                }
+                const compoundKey = `${parentRow.id}:${entry.subKey}`;
+                if (!subcategoriesToAdd.has(compoundKey)) {
+                    subcategoriesToAdd.set(compoundKey, {
+                        parentId: parentRow.id,
+                        name: entry.subName
+                    });
+                }
+            }
+
+            for (const subcategory of subcategoriesToAdd.values()) {
+                try {
+                    console.log(`Creating new subcategory: ${subcategory.name}`);
+                    const { rows: newSub } = await query(`
+                        INSERT INTO categories (name, name_ar, icon, bg_color, display_order, is_active, parent_id)
+                        VALUES ($1, $2, $3, $4, (SELECT COALESCE(MAX(display_order), 0) + 1 FROM categories WHERE parent_id = $5), true, $5)
+                        ON CONFLICT (name) DO NOTHING
+                        RETURNING id, name, name_ar
+                    `, [
+                        subcategory.name,
+                        subcategory.name,
+                        '📦',
+                        'bg-gray-50',
+                        subcategory.parentId
+                    ]);
+
+                    if (newSub.length > 0) {
+                        newCategories.push(newSub[0]);
+                        console.log(`✅ Created subcategory: ${subcategory.name} (ID: ${newSub[0].id})`);
+                    }
+                } catch (err) {
+                    console.error(`Error creating subcategory ${subcategory.name}:`, err.message);
                 }
             }
             
@@ -532,7 +679,7 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
             // Check if auto-publish is requested
             const autoPublish = req.body.autoPublish === 'true' || req.body.autoPublish === true;
             
-            if (autoPublish && imported.length > 0) {
+            if (autoPublish && (imported.length > 0 || updated.length > 0)) {
                 console.log('Auto-publishing products...');
                 
                 // Publish all drafts from this batch
@@ -547,25 +694,43 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                     
                     for (const draft of draftsResult.rows) {
                         try {
-                            // Check if product exists
-                            const existingProduct = await query(
-                                'SELECT id FROM products WHERE barcode = $1',
-                                [draft.barcode]
-                            );
+                            // Check if product exists (barcode or name)
+                            let existingProduct = null;
+                            if (draft.barcode) {
+                                const { rows } = await query(
+                                    'SELECT id FROM products WHERE barcode = $1 LIMIT 1',
+                                    [draft.barcode]
+                                );
+                                if (rows.length > 0) {
+                                    existingProduct = rows[0];
+                                }
+                            }
+
+                            if (!existingProduct && draft.name) {
+                                const { rows } = await query(
+                                    'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1',
+                                    [draft.name]
+                                );
+                                if (rows.length > 0) {
+                                    existingProduct = rows[0];
+                                }
+                            }
                             
                             let productId;
                             
-                            if (existingProduct.rows.length > 0) {
+                            if (existingProduct) {
                                 // Update existing
-                                productId = existingProduct.rows[0].id;
+                                productId = existingProduct.id;
                                 await query(`
                                     UPDATE products SET
                                         name = $1, category = $2,
-                                        subcategory = $3, image = $4
-                                    WHERE id = $5
+                                        subcategory = $3, image = $4,
+                                        barcode = COALESCE($5, barcode)
+                                    WHERE id = $6
                                 `, [
                                     draft.name, draft.category,
                                     draft.subcategory, draft.image,
+                                    draft.barcode,
                                     productId
                                 ]);
                             } else {
@@ -592,25 +757,25 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                             );
                             
                             if (existingBranchProduct.rows.length > 0) {
-                                // UPDATE existing - SET new price and old_price, ADD to stock
+                                // UPDATE existing - SET latest price/stock values
                                 await query(`
                                     UPDATE branch_products 
                                     SET 
                                         price = COALESCE($1, price),
                                         discount_price = COALESCE($2, discount_price),
-                                        stock_quantity = COALESCE(stock_quantity, 0) + COALESCE($3, 0),
+                                        stock_quantity = COALESCE($3, stock_quantity),
                                         expiry_date = COALESCE($4, expiry_date),
                                         updated_at = NOW()
                                     WHERE product_id = $5 AND branch_id = $6
                                 `, [
                                     draft.price,
                                     draft.old_price,
-                                    draft.stock_quantity || 0,
+                                    draft.stock_quantity,
                                     draft.expiry_date,
                                     productId,
                                     draft.branch_id
                                 ]);
-                                console.log(`📝 Updated stock for product ${productId}: +${draft.stock_quantity || 0} items, price=${draft.price}, old_price=${draft.old_price}`);
+                                console.log(`📝 Updated product ${productId} in branch ${draft.branch_id}`);
                             } else {
                                 // INSERT new branch_product
                                 await query(`
@@ -1020,29 +1185,47 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
         // Process each draft product
         for (const draft of draftsResult.rows) {
             try {
-                // Check if product with same barcode already exists
-                const existingProduct = await query(
-                    'SELECT id FROM products WHERE barcode = $1',
-                    [draft.barcode]
-                );
+                // Check if product with same barcode or name already exists
+                let existingProduct = null;
+                if (draft.barcode) {
+                    const { rows } = await query(
+                        'SELECT id FROM products WHERE barcode = $1 LIMIT 1',
+                        [draft.barcode]
+                    );
+                    if (rows.length > 0) {
+                        existingProduct = rows[0];
+                    }
+                }
+
+                if (!existingProduct && draft.name) {
+                    const { rows } = await query(
+                        'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1',
+                        [draft.name]
+                    );
+                    if (rows.length > 0) {
+                        existingProduct = rows[0];
+                    }
+                }
                 
                 let productId;
                 
-                if (existingProduct.rows.length > 0) {
+                if (existingProduct) {
                     // Update existing product
-                    productId = existingProduct.rows[0].id;
+                    productId = existingProduct.id;
                     await query(`
                         UPDATE products SET
                             name = $1,
                             category = $2,
                             subcategory = $3,
-                            image = $4
-                        WHERE id = $5
+                            image = $4,
+                            barcode = COALESCE($5, barcode)
+                        WHERE id = $6
                     `, [
                         draft.name,
                         draft.category,
                         draft.subcategory,
                         draft.image,
+                        draft.barcode,
                         productId
                     ]);
                 } else {
@@ -1076,10 +1259,10 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
                     await query(`
                         UPDATE branch_products 
                         SET 
-                            price = $1,
-                            discount_price = $2,
-                            stock_quantity = stock_quantity + $3,
-                            expiry_date = $4
+                            price = COALESCE($1, price),
+                            discount_price = COALESCE($2, discount_price),
+                            stock_quantity = COALESCE($3, stock_quantity),
+                            expiry_date = COALESCE($4, expiry_date)
                         WHERE product_id = $5 AND branch_id = $6
                     `, [
                         draft.price,
