@@ -281,6 +281,14 @@ function mapRowToProduct(row, rowIndex) {
     }
     
     // Normalize brand fields
+    if (product.brand) {
+        const b = String(product.brand).trim();
+        product.brand = b || null;
+    }
+    if (product.brand_name) {
+        const b = String(product.brand_name).trim();
+        product.brand_name = b || null;
+    }
     if (product.brand_name && !product.brand) {
         product.brand = product.brand_name;
     }
