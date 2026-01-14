@@ -1268,171 +1268,67 @@ router.post('/setup-draft-table', [verifyToken, isAdmin], async (req, res) => {
 router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, res) => {
     try {
         const { batchId } = req.params;
-        
-        await query('BEGIN');
-        
-        // Get all draft products for this batch
-        const draftsResult = await query(
-            'SELECT * FROM draft_products WHERE import_batch_id = $1',
+        const rawLimit = Number.parseInt(req.query.limit, 10);
+        const batchLimit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 500) : 150;
+
+        const { rows: countRows } = await query(
+            'SELECT COUNT(*)::int AS total FROM draft_products WHERE import_batch_id = $1',
             [batchId]
         );
-        
-        if (draftsResult.rows.length === 0) {
-            await query('ROLLBACK');
+        const totalDrafts = countRows[0]?.total || 0;
+
+        if (totalDrafts === 0) {
             return res.status(404).json({ 
                 success: false,
                 error: 'No draft products found for this batch' 
             });
         }
-        
-        let successCount = 0;
-        let publishErrors = [];
-        const successDraftIds = [];
-        const brandIndex = await buildBrandIndex();
-        
-        // Process each draft product
-        for (const draft of draftsResult.rows) {
-            try {
-                // Check if product with same barcode or name already exists
-                let existingProduct = null;
-                if (draft.barcode) {
-                    const { rows } = await query(
-                        'SELECT id FROM products WHERE barcode = $1 LIMIT 1',
-                        [draft.barcode]
-                    );
-                    if (rows.length > 0) {
-                        existingProduct = rows[0];
-                    }
-                }
 
-                if (!existingProduct && draft.name) {
-                    const { rows } = await query(
-                        'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1',
-                        [draft.name]
-                    );
-                    if (rows.length > 0) {
-                        existingProduct = rows[0];
-                    }
-                }
-                
-                let productId;
-                const brandId = await ensureBrand(draft.brand_name, brandIndex);
-                
-                if (existingProduct) {
-                    // Update existing product
-                    productId = existingProduct.id;
-                    await query(`
-                        UPDATE products SET
-                            name = $1,
-                            category = $2,
-                            subcategory = $3,
-                            image = $4,
-                            barcode = COALESCE($5, barcode),
-                            brand_id = COALESCE($6, brand_id)
-                        WHERE id = $7
-                    `, [
-                        draft.name,
-                        draft.category,
-                        draft.subcategory,
-                        draft.image,
-                        draft.barcode,
-                        brandId,
-                        productId
-                    ]);
-                } else {
-                    // Insert new product - generate ID from barcode or sequence
-                    const productIdCandidate = await resolveProductIdCandidate(draft.barcode);
-                    const newProduct = await query(`
-                        INSERT INTO products (
-                            id, name, barcode, category, subcategory, image, brand_id
-                        ) VALUES (
-                            COALESCE($1, (SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) + 1 FROM products WHERE id ~ '^[0-9]+$')::TEXT),
-                            $2, $3, $4, $5, $6, $7
-                        )
-                        RETURNING id
-                    `, [
-                        productIdCandidate,
-                        draft.name,
-                        draft.barcode,
-                        draft.category,
-                        draft.subcategory,
-                        draft.image,
-                        brandId
-                    ]);
-                    productId = newProduct.rows[0].id;
-                }
-                
-                // Update or insert branch_products
-                const existingBranchProduct = await query(
-                    'SELECT branch_id FROM branch_products WHERE product_id = $1 AND branch_id = $2',
-                    [productId, draft.branch_id]
-                );
-                
-                if (existingBranchProduct.rows.length > 0) {
-                    await query(`
-                        UPDATE branch_products 
-                        SET 
-                            price = COALESCE($1, price),
-                            discount_price = COALESCE($2, discount_price),
-                            stock_quantity = COALESCE($3, stock_quantity),
-                            expiry_date = COALESCE($4, expiry_date)
-                        WHERE product_id = $5 AND branch_id = $6
-                    `, [
-                        draft.price,
-                        draft.old_price,
-                        draft.stock_quantity,
-                        draft.expiry_date,
-                        productId,
-                        draft.branch_id
-                    ]);
-                } else {
-                    await query(`
-                        INSERT INTO branch_products (
-                            product_id, branch_id, price, discount_price,
-                            stock_quantity, expiry_date
-                        )
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                    `, [
-                        productId,
-                        draft.branch_id,
-                        draft.price,
-                        draft.old_price,
-                        draft.stock_quantity,
-                        draft.expiry_date
-                    ]);
-                }
-                
-                successCount++;
-                successDraftIds.push(draft.id);
-            } catch (error) {
-                console.error(`Error publishing draft ${draft.id}:`, error);
-                publishErrors.push({
-                    name: draft.name,
-                    barcode: draft.barcode,
-                    error: error.message
-                });
-            }
-        }
-        
-        if (successDraftIds.length > 0) {
-            await query(
-                'DELETE FROM draft_products WHERE id = ANY($1::int[])',
-                [successDraftIds]
-            );
-        }
-        
-        await query('COMMIT');
-        
+        const { rows: publishRows } = await query(`
+            SELECT 
+                dp.id AS draft_id,
+                dp.name,
+                dp.barcode,
+                result.product_id,
+                result.success,
+                result.message
+            FROM (
+                SELECT id, name, barcode
+                FROM draft_products
+                WHERE import_batch_id = $1
+                ORDER BY id
+                LIMIT $2
+            ) dp
+            CROSS JOIN LATERAL publish_draft_product(dp.id) AS result
+        `, [batchId, batchLimit]);
+
+        const publishedCount = publishRows.filter(row => row.success).length;
+        const publishErrors = publishRows
+            .filter(row => !row.success)
+            .map(row => ({
+                id: row.draft_id,
+                name: row.name,
+                barcode: row.barcode,
+                error: row.message || 'Failed to publish'
+            }));
+
+        const { rows: remainingRows } = await query(
+            'SELECT COUNT(*)::int AS remaining FROM draft_products WHERE import_batch_id = $1',
+            [batchId]
+        );
+        const remaining = remainingRows[0]?.remaining || 0;
+
         res.json({
             success: true,
-            publishedCount: successCount,
-            totalDrafts: draftsResult.rows.length,
+            publishedCount,
+            processed: publishRows.length,
+            totalDrafts,
+            remaining,
             errors: publishErrors.length > 0 ? publishErrors : undefined,
-            message: `تم نشر ${successCount} من ${draftsResult.rows.length} منتج بنجاح`
+            message: `تم نشر ${publishedCount} من ${publishRows.length} منتج في هذه الدفعة`
         });
         
     } catch (err) {
-        await query('ROLLBACK');
         console.error('Error publishing draft products:', err);
         res.status(500).json({ 
             success: false,
