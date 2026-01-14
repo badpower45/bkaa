@@ -296,6 +296,14 @@ function mapRowToProduct(row, rowIndex) {
             }
         }
     }
+    // Explicit fallback: if brand not found, use captured column L value (common Excel position)
+    if (!product.brand && !product.brand_name && row.__brand_col_l_fallback) {
+        const fallbackBrand = String(row.__brand_col_l_fallback).trim();
+        if (fallbackBrand) {
+            product.brand = fallbackBrand;
+            product.brand_name = fallbackBrand;
+        }
+    }
     if (product.brand) {
         const b = String(product.brand).trim();
         product.brand = b || null;
@@ -483,6 +491,11 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                     if (!h) return; // skip empty header columns
                     obj[h] = rowArr[idx];
                 });
+                // Explicit fallback: capture column L (index 11) in case brand header is missing
+                const colL = rowArr?.[11];
+                if (colL !== null && colL !== undefined && String(colL).trim() !== '') {
+                    obj.__brand_col_l_fallback = colL;
+                }
                 return obj;
             })
             .filter(r => Object.values(r).some(v => v !== null && v !== undefined && String(v).trim() !== ''));
