@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS draft_products (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Ensure brand column exists for older installs
+ALTER TABLE draft_products ADD COLUMN IF NOT EXISTS brand_name VARCHAR(100);
+
 -- Create index for faster queries
 CREATE INDEX IF NOT EXISTS idx_draft_products_status ON draft_products(status);
 CREATE INDEX IF NOT EXISTS idx_draft_products_batch ON draft_products(import_batch_id);
@@ -44,6 +47,7 @@ RETURNS TABLE(product_id TEXT, success BOOLEAN, message TEXT) AS $$
 DECLARE
     v_product_id TEXT;
     v_existing_id TEXT;
+    v_brand_id INTEGER;
     v_draft RECORD;
 BEGIN
     -- Get draft product
@@ -58,6 +62,21 @@ BEGIN
     IF v_draft.name IS NULL OR v_draft.price IS NULL THEN
         RETURN QUERY SELECT NULL::TEXT, FALSE, 'Missing required fields: name and price';
         RETURN;
+    END IF;
+
+    -- Resolve brand from draft if provided
+    IF v_draft.brand_name IS NOT NULL AND TRIM(v_draft.brand_name) <> '' THEN
+        SELECT id INTO v_brand_id
+        FROM brands
+        WHERE LOWER(TRIM(name_ar)) = LOWER(TRIM(v_draft.brand_name))
+           OR LOWER(TRIM(name_en)) = LOWER(TRIM(v_draft.brand_name))
+        LIMIT 1;
+
+        IF v_brand_id IS NULL THEN
+            INSERT INTO brands (name_ar, name_en)
+            VALUES (v_draft.brand_name, v_draft.brand_name)
+            RETURNING id INTO v_brand_id;
+        END IF;
     END IF;
 
     -- Find existing product by barcode or name
@@ -76,19 +95,21 @@ BEGIN
             category = COALESCE(v_draft.category, category),
             subcategory = COALESCE(v_draft.subcategory, subcategory),
             image = COALESCE(v_draft.image, image),
-            barcode = COALESCE(v_draft.barcode, barcode)
+            barcode = COALESCE(v_draft.barcode, barcode),
+            brand_id = COALESCE(v_brand_id, brand_id)
         WHERE id = v_product_id;
     ELSE
         -- Insert into products table
         INSERT INTO products (
-            id, name, category, subcategory, image, barcode
+            id, name, category, subcategory, image, barcode, brand_id
         ) VALUES (
             COALESCE(NULLIF(TRIM(v_draft.barcode), ''), (SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) + 1 FROM products WHERE id ~ '^[0-9]+$')::TEXT),
             v_draft.name,
             COALESCE(v_draft.category, 'Uncategorized'),
             v_draft.subcategory,
             v_draft.image,
-            v_draft.barcode
+            v_draft.barcode,
+            v_brand_id
         ) RETURNING id INTO v_product_id;
     END IF;
     
