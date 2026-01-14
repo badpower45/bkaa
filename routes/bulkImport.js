@@ -459,16 +459,36 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
         console.log('Sheet range:', worksheet['!ref']);
         console.log('Has data beyond header:', hasData);
         
-        // Convert to JSON - include header even if empty, and be very lenient
-        const rows = xlsx.utils.sheet_to_json(worksheet, { 
+        // Convert to JSON with robust header detection (skip leading blank rows)
+        const rawRows = xlsx.utils.sheet_to_json(worksheet, {
+            header: 1,
             defval: null,
-            raw: false, // Convert all values to strings first
-            blankrows: false // Skip completely empty rows
+            raw: false,
+            blankrows: false
         });
-        
+
+        // Find first non-empty row to treat as header
+        let headerRowIndex = rawRows.findIndex(r => Array.isArray(r) && r.some(v => v !== null && String(v).trim() !== ''));
+        if (headerRowIndex === -1) {
+            return res.status(400).json({ error: 'الملف لا يحتوي على بيانات صالحة' });
+        }
+
+        const headers = rawRows[headerRowIndex].map(h => (h ? String(h).trim() : '')); // keep empty headers as ''
+        const dataRows = rawRows.slice(headerRowIndex + 1);
+
+        const rows = dataRows
+            .map(rowArr => {
+                const obj = {};
+                headers.forEach((h, idx) => {
+                    if (!h) return; // skip empty header columns
+                    obj[h] = rowArr[idx];
+                });
+                return obj;
+            })
+            .filter(r => Object.values(r).some(v => v !== null && v !== undefined && String(v).trim() !== ''));
+
         console.log('Parsed rows:', rows.length);
-        
-        // Log first row to see column names
+
         if (rows.length > 0) {
             const sampleColumns = Object.keys(rows[0])
                 .filter((key) => !key.toLowerCase().startsWith('__empty'))
