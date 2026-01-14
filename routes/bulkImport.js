@@ -1269,7 +1269,7 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
     try {
         const { batchId } = req.params;
         const rawLimit = Number.parseInt(req.query.limit, 10);
-        const batchLimit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 500) : 150;
+        const batchLimit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100000) : 100000;
 
         const { rows: countRows } = await query(
             'SELECT COUNT(*)::int AS total FROM draft_products WHERE import_batch_id = $1',
