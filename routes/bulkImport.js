@@ -210,7 +210,11 @@ const COLUMN_MAPPING = {
     ],
     'image': ['image', 'image_url', 'Main Image', 'Image URL', 'Image Url', 'الصورة', 'صورة', 'صوره', 'Image', 'لينك الصوره'],
     'expiry_date': ['expiry_date', 'expiryDate', 'Expiry Date', 'Expiration Date', 'تاريخ الصلاحيه', 'تاريخ الصلاحية', 'صلاحيه', 'صلاحية', 'Expiry'],
-    'brand': ['brand', 'brand_name', 'Brand Name', 'brand_id', 'البراند', 'الماركة', 'اسم البراند', 'Brand']
+    'brand': [
+        'brand', 'brand_name', 'Brand Name', 'brand_id', 'BrandName', 'Brand name',
+        'البراند', 'الماركة', 'العلامة التجارية', 'اسم البراند', 'براند', 'ماركة', 'الماركه', 'براند المنتج',
+        'company', 'المصنع', 'المُصنِّع'
+    ]
 };
 
 const buildRowLookup = (row) => {
@@ -276,6 +280,14 @@ function mapRowToProduct(row, rowIndex) {
         }
     }
     
+    // Normalize brand fields
+    if (product.brand_name && !product.brand) {
+        product.brand = product.brand_name;
+    }
+    if (product.brand && !product.brand_name) {
+        product.brand_name = product.brand;
+    }
+
     // Basic validation (very lenient)
     if (product.price) {
         const priceNum = parseFloat(product.price);
@@ -501,10 +513,11 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                     subName: rawSubcategory
                 });
             }
-            if (product.brand) {
-                const brandKey = normalizeBrandValue(product.brand);
+            if (product.brand || product.brand_name) {
+                const brandValue = product.brand || product.brand_name;
+                const brandKey = normalizeBrandValue(brandValue);
                 if (!brandIndex.has(brandKey)) {
-                    missingBrands.set(brandKey, product.brand);
+                    missingBrands.set(brandKey, brandValue);
                 }
             }
             
@@ -721,7 +734,7 @@ router.post('/bulk-import', [verifyToken, isAdmin, upload.single('file')], async
                             product.branch_id || 1,
                             product.stock_quantity || 0,
                             product.expiry_date || null,
-                            product.brand || null,
+                            product.brand || product.brand_name || null,
                             errors.length > 0 ? 'draft' : 'validated',
                             batchId,
                             userId,
