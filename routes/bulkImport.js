@@ -1284,32 +1284,53 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
             });
         }
 
-        const { rows: publishRows } = await query(`
-            SELECT 
-                dp.id AS draft_id,
-                dp.name,
-                dp.barcode,
-                result.product_id,
-                result.success,
-                result.message
-            FROM (
-                SELECT id, name, barcode
-                FROM draft_products
-                WHERE import_batch_id = $1
-                ORDER BY id
-                LIMIT $2
-            ) dp
-            CROSS JOIN LATERAL publish_draft_product(dp.id::text) AS result
+        // Get draft products to publish
+        const { rows: drafts } = await query(`
+            SELECT * FROM draft_products
+            WHERE import_batch_id = $1
+            ORDER BY id
+            LIMIT $2
         `, [batchId, batchLimit]);
 
-        const publishedCount = publishRows.filter(row => row.success).length;
-        const publishErrors = publishRows
-            .filter(row => !row.success)
-            .map(row => ({
-                id: row.draft_id,
-                name: row.name,
-                barcode: row.barcode,
-                error: row.message || 'Failed to publish'
+        const publishResults = [];
+        
+        // Publish each draft directly (without using the problematic function)
+        for (const draft of drafts) {
+            try {
+                // Call the function properly with string cast
+                const { rows: funcResult } = await query(
+                    'SELECT * FROM publish_draft_product($1::text)',
+                    [draft.id.toString()]
+                );
+                
+                publishResults.push({
+                    draft_id: draft.id,
+                    name: draft.name,
+                    barcode: draft.barcode,
+                    success: funcResult[0]?.success || false,
+                    product_id: funcResult[0]?.product_id,
+                    message: funcResult[0]?.message
+                });
+            } catch (err) {
+                console.error(`Error publishing draft ${draft.id}:`, err.message);
+                publishResults.push({
+                    draft_id: draft.id,
+                    name: draft.name,
+                    barcode: draft.barcode,
+                    success: false,
+                    message: err.message
+                });
+            }
+        }
+
+        const publishedCount = publishResults.filter(r => r.success).length;
+        const publishErrors = publishResults
+            .filter(r => !r.success)
+            .map(r => ({
+                id: r.draft_id,
+                name: r.name,
+                barcode: r.barcode,
+                error: r.message || 'Failed to publish'
             }));
 
         const { rows: remainingRows } = await query(
@@ -1321,11 +1342,11 @@ router.post('/drafts/:batchId/publish-all', [verifyToken, isAdmin], async (req, 
         res.json({
             success: true,
             publishedCount,
-            processed: publishRows.length,
+            processed: publishResults.length,
             totalDrafts,
             remaining,
             errors: publishErrors.length > 0 ? publishErrors : undefined,
-            message: `تم نشر ${publishedCount} من ${publishRows.length} منتج في هذه الدفعة`
+            message: `تم نشر ${publishedCount} من ${publishResults.length} منتج في هذه الدفعة`
         });
         
     } catch (err) {
