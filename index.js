@@ -119,49 +119,44 @@ const authLimiter = rateLimit({
     message: { error: 'Too many authentication attempts, please try again later.' }
 });
 
+// CORS - Handle preflight requests FIRST
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    
+    // Allow all origins (Vercel domains and localhost)
+    if (origin) {
+        res.header('Access-Control-Allow-Origin', origin);
+    } else {
+        res.header('Access-Control-Allow-Origin', '*');
+    }
+    
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, apikey, Accept');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Max-Age', '86400');
+    
+    // Handle preflight
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+    next();
+});
+
 // Middleware
 app.use(cors({
-    origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps or Postman)
-        if (!origin) return callback(null, true);
-        const isAllowed = allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin);
-        if (isAllowed) {
-            return callback(null, true);
-        }
-        // Fail open to avoid 500 on preflight; log for visibility
-        console.warn('CORS fallback allowing origin:', origin);
-        return callback(null, true);
-    },
+    origin: true, // Allow all origins
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'apikey'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'apikey', 'Accept'],
     exposedHeaders: ['Content-Length', 'Content-Type'],
-    maxAge: 86400 // 24 hours
+    maxAge: 86400
 }));
-
-// Handle preflight requests explicitly
-app.options('*', cors());
 
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 // Serve static files from uploads directory
 app.use('/uploads', express.static('uploads'));
-
-// Add CORS headers to all responses as backup (MOVED BEFORE ROUTES)
-app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    if (origin && (allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin))) {
-        res.header('Access-Control-Allow-Origin', origin);
-    }
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, apikey');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-    }
-    next();
-});
 
 // Backward compatibility middleware - redirect old routes without /api prefix
 app.use((req, res, next) => {
