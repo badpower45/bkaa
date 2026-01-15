@@ -881,26 +881,23 @@ router.get('/frames', async (req, res) => {
     }
 });
 
-// Upload new frame
-router.post('/upload-frame', verifyToken, isAdmin, secureFrameUpload, async (req, res) => {
+// Upload new frame - Using BASE64 (serverless compatible)
+router.post('/upload-frame', verifyToken, isAdmin, async (req, res) => {
     try {
-        console.log('🖼️ Upload frame request:', {
-            body: req.body,
-            file: req.file ? { filename: req.file.filename, path: req.file.path, size: req.file.size } : null
-        });
+        console.log('🖼️ Upload frame request (base64)');
 
-        if (!req.file) {
-            return res.status(400).json({ error: 'No frame file uploaded' });
-        }
-
-        const { name, name_ar, category } = req.body;
+        const { name, name_ar, category, frame_base64 } = req.body;
         
         if (!name || !name_ar) {
             return res.status(400).json({ error: 'Name and name_ar are required' });
         }
 
-        // Cloudinary returns the URL in req.file.path
-        const frameUrl = req.file.path;
+        if (!frame_base64) {
+            return res.status(400).json({ error: 'frame_base64 is required' });
+        }
+
+        // Store base64 directly in database (no file system needed!)
+        const frameUrl = frame_base64; // Base64 data URL
         
         const { rows } = await query(
             `INSERT INTO product_frames (name, name_ar, frame_url, category, is_active)
@@ -909,7 +906,7 @@ router.post('/upload-frame', verifyToken, isAdmin, secureFrameUpload, async (req
             [name, name_ar, frameUrl, category || 'general']
         );
 
-        console.log('✅ Frame uploaded successfully:', rows[0]);
+        console.log('✅ Frame uploaded successfully:', rows[0].id);
         res.json({ success: true, data: rows[0], message: 'Frame uploaded successfully' });
     } catch (error) {
         console.error('❌ Error uploading frame:', error);
