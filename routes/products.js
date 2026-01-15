@@ -861,4 +861,135 @@ router.post('/upload', [verifyToken, isAdmin, secureExcelUpload.single('file'), 
 // Error handler for file upload errors
 router.use(handleUploadError);
 
+// ============================================
+// 🖼️ PRODUCT FRAMES ROUTES
+// ============================================
+
+// Get all frames
+router.get('/frames', async (req, res) => {
+    try {
+        const { rows } = await query(
+            'SELECT * FROM product_frames WHERE is_active = TRUE ORDER BY created_at DESC'
+        );
+        res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error('Error fetching frames:', error);
+        res.status(500).json({ error: 'Failed to fetch frames' });
+    }
+});
+
+// Upload new frame
+router.post('/upload-frame', verifyToken, isAdmin, async (req, res) => {
+    try {
+        // This endpoint expects multipart/form-data with:
+        // - frame: image file (PNG)
+        // - name: English name
+        // - name_ar: Arabic name
+        // - category: frame category
+        
+        const { name, name_ar, category } = req.body;
+        
+        if (!name || !name_ar) {
+            return res.status(400).json({ error: 'Name and name_ar are required' });
+        }
+
+        // Placeholder: In real implementation, upload file to storage
+        const frameUrl = '/uploads/frames/placeholder.png';
+        
+        const { rows } = await query(
+            `INSERT INTO product_frames (name, name_ar, frame_url, category, is_active)
+             VALUES ($1, $2, $3, $4, TRUE)
+             RETURNING *`,
+            [name, name_ar, frameUrl, category || 'general']
+        );
+
+        res.json({ success: true, data: rows[0], message: 'Frame uploaded successfully' });
+    } catch (error) {
+        console.error('Error uploading frame:', error);
+        res.status(500).json({ error: 'Failed to upload frame' });
+    }
+});
+
+// Delete frame
+router.delete('/frames/:id', verifyToken, isAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Check if frame is used by any products
+        const { rows: usedBy } = await query(
+            'SELECT COUNT(*) as count FROM products WHERE frame_overlay_url = (SELECT frame_url FROM product_frames WHERE id = $1)',
+            [id]
+        );
+        
+        if (usedBy[0]?.count > 0) {
+            return res.status(400).json({ 
+                error: `Cannot delete frame. It is used by ${usedBy[0].count} product(s)` 
+            });
+        }
+
+        await query('DELETE FROM product_frames WHERE id = $1', [id]);
+        res.json({ success: true, message: 'Frame deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting frame:', error);
+        res.status(500).json({ error: 'Failed to delete frame' });
+    }
+});
+
+// Update product frame
+router.patch('/:id/frame', verifyToken, isAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { frame_overlay_url, frame_enabled } = req.body;
+        
+        const { rows } = await query(
+            `UPDATE products 
+             SET frame_overlay_url = $1, frame_enabled = $2
+             WHERE id = $3
+             RETURNING *`,
+            [frame_overlay_url, frame_enabled, id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Product not found' });
+        }
+
+        res.json({ success: true, data: rows[0] });
+    } catch (error) {
+        console.error('Error updating product frame:', error);
+        res.status(500).json({ error: 'Failed to update product frame' });
+    }
+});
+
+// Apply frame to ALL products
+router.post('/apply-frame-to-all', verifyToken, isAdmin, async (req, res) => {
+    try {
+        const { frame_overlay_url, frame_enabled } = req.body;
+        
+        if (!frame_overlay_url) {
+            return res.status(400).json({ error: 'frame_overlay_url is required' });
+        }
+
+        console.log('🖼️ Applying frame to all products:', { frame_overlay_url, frame_enabled });
+
+        const { rows } = await query(
+            `UPDATE products 
+             SET frame_overlay_url = $1, frame_enabled = $2
+             WHERE 1=1
+             RETURNING id`,
+            [frame_overlay_url, frame_enabled !== false]
+        );
+
+        console.log(`✅ Updated ${rows.length} products with frame`);
+
+        res.json({ 
+            success: true, 
+            message: `Applied frame to ${rows.length} products`,
+            updatedCount: rows.length 
+        });
+    } catch (error) {
+        console.error('Error applying frame to all products:', error);
+        res.status(500).json({ error: 'Failed to apply frame to all products' });
+    }
+});
+
 export default router;
