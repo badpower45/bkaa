@@ -76,7 +76,8 @@ app.use(cors({
 // Handle preflight requests
 app.options('*', cors());
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // JWT Configuration - Use a fixed secret if env var missing
 const JWT_SECRET = process.env.JWT_SECRET || 'allosh-supermarket-secret-key-2026-production';
@@ -371,6 +372,134 @@ app.get('/api/products', async (req, res) => {
         console.error('Products error:', err);
         console.error('SQL:', err.message);
         res.status(500).json({ error: 'Failed to fetch products', details: err.message });
+    }
+});
+
+// ===================== PRODUCT FRAMES ROUTES =====================
+
+// Get all frames
+app.get('/api/products/frames', async (req, res) => {
+    try {
+        const { rows } = await query(
+            'SELECT * FROM product_frames WHERE is_active = TRUE ORDER BY created_at DESC'
+        );
+        res.json({ success: true, data: rows });
+    } catch (err) {
+        console.error('Error fetching frames:', err);
+        res.status(500).json({ error: 'Failed to fetch frames', details: err.message });
+    }
+});
+
+// Upload new frame - Using BASE64
+app.post('/api/products/upload-frame', verifyToken, async (req, res) => {
+    try {
+        console.log('🖼️ Upload frame request (base64)');
+
+        const { name, name_ar, category, frame_base64 } = req.body;
+
+        if (!name || !name_ar) {
+            return res.status(400).json({ error: 'Name and name_ar are required' });
+        }
+
+        if (!frame_base64) {
+            return res.status(400).json({ error: 'frame_base64 is required' });
+        }
+
+        const frameUrl = frame_base64;
+
+        const { rows } = await query(
+            `INSERT INTO product_frames (name, name_ar, frame_url, category, is_active)
+             VALUES ($1, $2, $3, $4, TRUE)
+             RETURNING *`,
+            [name, name_ar, frameUrl, category || 'general']
+        );
+
+        console.log('✅ Frame uploaded successfully:', rows[0].id);
+        res.json({ success: true, data: rows[0], message: 'Frame uploaded successfully' });
+    } catch (err) {
+        console.error('❌ Error uploading frame:', err);
+        res.status(500).json({ error: 'Failed to upload frame', details: err.message });
+    }
+});
+
+// Delete frame
+app.delete('/api/products/frames/:id', verifyToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const { rows: usedBy } = await query(
+            'SELECT COUNT(*) as count FROM products WHERE frame_overlay_url = (SELECT frame_url FROM product_frames WHERE id = $1)',
+            [id]
+        );
+
+        if (usedBy[0]?.count > 0) {
+            return res.status(400).json({
+                error: `Cannot delete frame. It is used by ${usedBy[0].count} product(s)`
+            });
+        }
+
+        await query('DELETE FROM product_frames WHERE id = $1', [id]);
+        res.json({ success: true, message: 'Frame deleted successfully' });
+    } catch (err) {
+        console.error('Error deleting frame:', err);
+        res.status(500).json({ error: 'Failed to delete frame', details: err.message });
+    }
+});
+
+// Update product frame
+app.patch('/api/products/:id/frame', verifyToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { frame_overlay_url, frame_enabled } = req.body;
+
+        const { rows } = await query(
+            `UPDATE products 
+             SET frame_overlay_url = $1, frame_enabled = $2
+             WHERE id = $3
+             RETURNING *`,
+            [frame_overlay_url, frame_enabled, id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Product not found' });
+        }
+
+        res.json({ success: true, data: rows[0] });
+    } catch (err) {
+        console.error('Error updating product frame:', err);
+        res.status(500).json({ error: 'Failed to update product frame', details: err.message });
+    }
+});
+
+// Apply frame to ALL products
+app.post('/api/products/apply-frame-to-all', verifyToken, async (req, res) => {
+    try {
+        const { frame_overlay_url, frame_enabled } = req.body;
+
+        if (!frame_overlay_url) {
+            return res.status(400).json({ error: 'frame_overlay_url is required' });
+        }
+
+        console.log('🖼️ Applying frame to all products:', { frame_overlay_url, frame_enabled });
+
+        const { rows } = await query(
+            `UPDATE products 
+             SET frame_overlay_url = $1, frame_enabled = $2
+             WHERE 1=1
+             RETURNING id`,
+            [frame_overlay_url, frame_enabled !== false]
+        );
+
+        console.log(`✅ Updated ${rows.length} products with frame`);
+
+        res.json({
+            success: true,
+            message: `Applied frame to ${rows.length} products`,
+            updatedCount: rows.length
+        });
+    } catch (err) {
+        console.error('Error applying frame to all products:', err);
+        res.status(500).json({ error: 'Failed to apply frame to all products', details: err.message });
     }
 });
 
