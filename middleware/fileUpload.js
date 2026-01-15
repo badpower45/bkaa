@@ -159,6 +159,50 @@ export const verifyFileContent = (allowedMimeTypes) => {
 };
 
 /**
+ * Create secure multer configuration for frame uploads (PNG only)
+ */
+export const createFrameUploader = (options = {}) => {
+    const {
+        maxSize = 500 * 1024, // 500KB for frames
+        fieldName = 'frame'
+    } = options;
+    
+    const storage = multer.diskStorage({
+        destination: (req, file, cb) => {
+            cb(null, 'uploads/frames/');
+        },
+        filename: (req, file, cb) => {
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            const ext = path.extname(file.originalname);
+            cb(null, `frame-${uniqueSuffix}${ext}`);
+        }
+    });
+    
+    const fileFilter = (req, file, cb) => {
+        // Only accept PNG files
+        if (file.mimetype !== 'image/png') {
+            return cb(new Error('Only PNG files are allowed for frames'), false);
+        }
+        
+        const ext = path.extname(file.originalname).toLowerCase();
+        if (ext !== '.png') {
+            return cb(new Error('File must have .png extension'), false);
+        }
+        
+        cb(null, true);
+    };
+    
+    return multer({
+        storage,
+        fileFilter,
+        limits: {
+            fileSize: maxSize,
+            files: 1
+        }
+    }).single(fieldName);
+};
+
+/**
  * Error handling middleware for multer errors
  */
 export const handleUploadError = (err, req, res, next) => {

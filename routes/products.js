@@ -1,14 +1,18 @@
 import express from 'express';
 import { query } from '../database.js'; // Use the exported query helper
 import { verifyToken, isAdmin } from '../middleware/auth.js';
-import { createExcelUploader, verifyFileContent, handleUploadError } from '../middleware/fileUpload.js';
+import { createExcelUploader, createFrameUploader, verifyFileContent, handleUploadError } from '../middleware/fileUpload.js';
 import { validate, productSchema, searchSchema } from '../middleware/validation.js';
 import * as xlsx from 'xlsx';
+import fs from 'fs';
+import path from 'path';
 
 const router = express.Router();
 
 // ✅ Security: Use secure file upload middleware
 const secureExcelUpload = createExcelUploader();
+const secureFrameUpload = createFrameUploader();
+const secureFrameUpload = createFrameUploader();
 
 const normalizeCategoryValue = (value = '') =>
     value
@@ -879,22 +883,27 @@ router.get('/frames', async (req, res) => {
 });
 
 // Upload new frame
-router.post('/upload-frame', verifyToken, isAdmin, async (req, res) => {
+router.post('/upload-frame', verifyToken, isAdmin, secureFrameUpload, async (req, res) => {
     try {
-        // This endpoint expects multipart/form-data with:
-        // - frame: image file (PNG)
-        // - name: English name
-        // - name_ar: Arabic name
-        // - category: frame category
-        
+        console.log('🖼️ Upload frame request:', {
+            body: req.body,
+            file: req.file ? { filename: req.file.filename, size: req.file.size } : null
+        });
+
+        if (!req.file) {
+            return res.status(400).json({ error: 'No frame file uploaded' });
+        }
+
         const { name, name_ar, category } = req.body;
         
         if (!name || !name_ar) {
+            // Delete uploaded file if validation fails
+            fs.unlinkSync(req.file.path);
             return res.status(400).json({ error: 'Name and name_ar are required' });
         }
 
-        // Placeholder: In real implementation, upload file to storage
-        const frameUrl = '/uploads/frames/placeholder.png';
+        // Create frame URL (relative path)
+        const frameUrl = `/uploads/frames/${req.file.filename}`;
         
         const { rows } = await query(
             `INSERT INTO product_frames (name, name_ar, frame_url, category, is_active)
@@ -903,9 +912,14 @@ router.post('/upload-frame', verifyToken, isAdmin, async (req, res) => {
             [name, name_ar, frameUrl, category || 'general']
         );
 
+        console.log('✅ Frame uploaded successfully:', rows[0]);
         res.json({ success: true, data: rows[0], message: 'Frame uploaded successfully' });
     } catch (error) {
-        console.error('Error uploading frame:', error);
+        console.error('❌ Error uploading frame:', error);
+        // Clean up uploaded file on error
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
         res.status(500).json({ error: 'Failed to upload frame' });
     }
 });
