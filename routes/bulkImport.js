@@ -1138,6 +1138,7 @@ router.get('/drafts/:batchId', [verifyToken, isAdmin], async (req, res) => {
                     id: row.id,
                     name: row.name,
                     barcode: row.barcode,
+                        brand_name: row.brand_name,
                     price_before: row.old_price,
                     price_after: row.price,
                     category: row.category,
@@ -1164,7 +1165,8 @@ router.put('/drafts/:id', [verifyToken, isAdmin], async (req, res) => {
         const allowedFields = [
             'name', 'category', 'subcategory', 'image', 'barcode',
             'old_price', 'price', 'discount_percentage',
-            'branch_id', 'stock_quantity', 'expiry_date', 'status', 'notes'
+            'branch_id', 'stock_quantity', 'expiry_date', 'status', 'notes',
+            'brand_name'
         ];
         
         const setClause = [];
