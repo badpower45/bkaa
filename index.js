@@ -48,6 +48,7 @@ import returnsEnhancedRoutes from './routes/returnsEnhanced.js';
 import notificationsRoutes from './routes/notifications.js';
 import adminAnalyticsRoutes from './routes/adminAnalytics.js';
 import adminEnhancedRoutes from './routes/adminEnhanced.js';
+import setupRoutes from './routes/setup.js';
 import inventoryRoutes from './routes/inventory.js';
 import excelRoutes from './routes/excel.js';
 import locationRoutes from './routes/location.js';
@@ -222,6 +223,9 @@ app.use('/api/order-cancellation', orderCancellationRoutes);
 app.use('/api/reviews', reviewLimiter, reviewsRoutes);
 app.use('/api/customer-block', customerBlockRoutes);
 app.use('/api/loyalty-barcode', loyaltyBarcodeRoutes);
+
+// Setup endpoint (for database initialization)
+app.use('/api/setup', setupRoutes);
 app.use('/api/hero-sections', heroSectionsRoutes);
 
 // Image Upload Route
