@@ -1,5 +1,6 @@
 import multer from 'multer';
 import path from 'path';
+import { frameStorage } from '../config/cloudinary.js';
 
 // Allowed file types and their mime types
 const ALLOWED_IMAGE_TYPES = {
@@ -160,23 +161,13 @@ export const verifyFileContent = (allowedMimeTypes) => {
 
 /**
  * Create secure multer configuration for frame uploads (PNG only)
+ * Uses Cloudinary storage for serverless compatibility
  */
 export const createFrameUploader = (options = {}) => {
     const {
-        maxSize = 500 * 1024, // 500KB for frames
+        maxSize = 5 * 1024 * 1024, // 5MB for frames
         fieldName = 'frame'
     } = options;
-    
-    const storage = multer.diskStorage({
-        destination: (req, file, cb) => {
-            cb(null, 'uploads/frames/');
-        },
-        filename: (req, file, cb) => {
-            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-            const ext = path.extname(file.originalname);
-            cb(null, `frame-${uniqueSuffix}${ext}`);
-        }
-    });
     
     const fileFilter = (req, file, cb) => {
         // Only accept PNG files
@@ -193,7 +184,7 @@ export const createFrameUploader = (options = {}) => {
     };
     
     return multer({
-        storage,
+        storage: frameStorage,
         fileFilter,
         limits: {
             fileSize: maxSize,

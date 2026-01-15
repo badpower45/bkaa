@@ -886,7 +886,7 @@ router.post('/upload-frame', verifyToken, isAdmin, secureFrameUpload, async (req
     try {
         console.log('🖼️ Upload frame request:', {
             body: req.body,
-            file: req.file ? { filename: req.file.filename, size: req.file.size } : null
+            file: req.file ? { filename: req.file.filename, path: req.file.path, size: req.file.size } : null
         });
 
         if (!req.file) {
@@ -896,13 +896,11 @@ router.post('/upload-frame', verifyToken, isAdmin, secureFrameUpload, async (req
         const { name, name_ar, category } = req.body;
         
         if (!name || !name_ar) {
-            // Delete uploaded file if validation fails
-            fs.unlinkSync(req.file.path);
             return res.status(400).json({ error: 'Name and name_ar are required' });
         }
 
-        // Create frame URL (relative path)
-        const frameUrl = `/uploads/frames/${req.file.filename}`;
+        // Cloudinary returns the URL in req.file.path
+        const frameUrl = req.file.path;
         
         const { rows } = await query(
             `INSERT INTO product_frames (name, name_ar, frame_url, category, is_active)
@@ -915,11 +913,7 @@ router.post('/upload-frame', verifyToken, isAdmin, secureFrameUpload, async (req
         res.json({ success: true, data: rows[0], message: 'Frame uploaded successfully' });
     } catch (error) {
         console.error('❌ Error uploading frame:', error);
-        // Clean up uploaded file on error
-        if (req.file && fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-        }
-        res.status(500).json({ error: 'Failed to upload frame' });
+        res.status(500).json({ error: 'Failed to upload frame', details: error.message });
     }
 });
 
