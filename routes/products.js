@@ -12,7 +12,6 @@ const router = express.Router();
 // ✅ Security: Use secure file upload middleware
 const secureExcelUpload = createExcelUploader();
 const secureFrameUpload = createFrameUploader();
-const secureFrameUpload = createFrameUploader();
 
 const normalizeCategoryValue = (value = '') =>
     value
