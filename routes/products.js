@@ -215,6 +215,7 @@ router.get('/', async (req, res) => {
                 ${categoryCte}
                 SELECT DISTINCT ON (p.id) p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, 
                        p.is_organic, p.is_new, p.barcode, p.shelf_location, p.subcategory, p.description,
+                       p.frame_overlay_url, p.frame_enabled,
                        bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id,
                        (mo.id IS NOT NULL) AS in_magazine
                 FROM products p
@@ -304,6 +305,7 @@ router.get('/', async (req, res) => {
         let sql = `
             ${categoryCte}
             SELECT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, p.is_organic, p.is_new, p.barcode, p.shelf_location,
+                   p.frame_overlay_url, p.frame_enabled,
                    bp.price, bp.discount_price, bp.stock_quantity, bp.is_available,
                    (mo.id IS NOT NULL) AS in_magazine
         FROM products p
