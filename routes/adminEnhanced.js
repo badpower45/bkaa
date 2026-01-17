@@ -459,6 +459,12 @@ router.get('/returns', [verifyToken, isAdmin], async (req, res) => {
             LIMIT $1 OFFSET $2
         `, params);
         
+        // Parse items JSON for each return
+        const parsedRows = rows.map(row => ({
+            ...row,
+            items: typeof row.items === 'string' ? JSON.parse(row.items) : row.items || []
+        }));
+        
         // Get total count
         const countQuery = status 
             ? 'SELECT COUNT(*) FROM returns WHERE status = $1' 
@@ -470,7 +476,7 @@ router.get('/returns', [verifyToken, isAdmin], async (req, res) => {
         
         res.json({
             success: true,
-            data: rows,
+            data: parsedRows,
             pagination: {
                 page: parseInt(page),
                 limit: parseInt(limit),

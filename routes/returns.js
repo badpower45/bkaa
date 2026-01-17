@@ -694,14 +694,31 @@ router.get('/invoice/:returnCode', async (req, res) => {
         
         const returnData = rows[0];
         
-        // Parse items
+        // Parse returned items with details
         const returnedItems = typeof returnData.items === 'string' 
             ? JSON.parse(returnData.items) 
-            : returnData.items;
-            
+            : Array.isArray(returnData.items) ? returnData.items : [];
+        
+        // Parse order items to get product names
         const orderItems = typeof returnData.order_items === 'string'
             ? JSON.parse(returnData.order_items)
-            : returnData.order_items;
+            : Array.isArray(returnData.order_items) ? returnData.order_items : [];
+        
+        // Map returned items with full details including product names
+        const detailedReturnedItems = returnedItems.map(item => {
+            const orderItem = orderItems.find(oi => 
+                oi.id === item.order_item_id || 
+                oi.product_id === item.product_id
+            );
+            
+            return {
+                product_id: item.product_id,
+                name: item.name || orderItem?.name || 'منتج',
+                quantity: Number(item.quantity || 0),
+                price: Number(item.price || orderItem?.price || 0),
+                total: Number(item.total || (item.quantity * item.price) || 0)
+            };
+        });
         
         // Build detailed invoice
         const invoice = {
@@ -736,7 +753,7 @@ router.get('/invoice/:returnCode', async (req, res) => {
                 note: 'تم خصم النقاط من رصيد العميل = مبلغ الاسترجاع'
             },
             
-            returned_items: returnedItems,
+            returned_items: detailedReturnedItems,
             
             return_reason: returnData.return_reason,
             return_notes: returnData.return_notes,
