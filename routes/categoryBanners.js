@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { query } from '../db/index.js';
+import { query } from '../database.js';
 import { verifyToken, isAdmin } from '../middleware/auth.js';
 
 const router = Router();
