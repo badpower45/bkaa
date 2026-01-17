@@ -59,6 +59,8 @@ import loyaltyBarcodeRoutes from './routes/loyaltyBarcode.js';
 import heroSectionsRoutes from './routes/heroSections.js';
 import paymentRoutes from './routes/payment.js';
 import refundRoutes from './routes/refund.js';
+import popupsRoutes from './routes/popups.js';
+import categoryBannersRoutes from './routes/categoryBanners.js';
 
 // dotenv is loaded in database.js with the correct path
 // No need to load it again here
@@ -228,6 +230,10 @@ app.use('/api/loyalty-barcode', loyaltyBarcodeRoutes);
 // Payment routes - معطل مؤقتًا لحين جمع الداتا
 // app.use('/api/payment', paymentRoutes);
 // app.use('/api/refund', refundRoutes);
+
+// Popups & Category Banners - معطل مؤقتًا
+// app.use('/api/popups', popupsRoutes);
+// app.use('/api/category-banners', categoryBannersRoutes);
 
 // Setup endpoint (for database initialization)
 app.use('/api/setup', setupRoutes);
