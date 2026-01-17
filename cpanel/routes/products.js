@@ -220,22 +220,24 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
             barcode || null
         ]);
 
-        // Add to branch inventory if price provided
-        if (price && branchId) {
-            const bpSql = `
-                INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
-                VALUES ($1, $2, $3, $4, $5, $6, TRUE)
-                ON CONFLICT (branch_id, product_id) DO UPDATE SET
-                    price = EXCLUDED.price,
-                    discount_price = EXCLUDED.discount_price,
-                    stock_quantity = EXCLUDED.stock_quantity,
-                    expiry_date = EXCLUDED.expiry_date
-            `;
-            await query(bpSql, [
-                branchId,
-                id,
-                price,
-                originalPrice || null, // السعر قبل (الأصلي) يُخزن في discount_price
+        // Add to branch inventory - always add to at least branch 1
+        const targetBranchId = branchId || 1; // Default to branch 1
+        const targetPrice = price || 0; // Default price
+        
+        const bpSql = `
+            INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
+            VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+            ON CONFLICT (branch_id, product_id) DO UPDATE SET
+                price = EXCLUDED.price,
+                discount_price = EXCLUDED.discount_price,
+                stock_quantity = EXCLUDED.stock_quantity,
+                expiry_date = EXCLUDED.expiry_date
+        `;
+        await query(bpSql, [
+            targetBranchId,
+            id,
+            targetPrice,
+            originalPrice || null, // السعر قبل (الأصلي) يُخزن في discount_price
                 stockQuantity || 0,
                 expiryDate || null
             ]);
