@@ -197,6 +197,56 @@ router.get('/admin/search-order/:orderId', [verifyToken, isAdmin], async (req, r
         
         // Parse items
         order.items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
+
+        const normalizeReturnItem = (item, orderItems = []) => {
+            const productId = item?.product_id ?? item?.productId ?? item?.id ?? null;
+            const matched = orderItems.find((orderItem) => {
+                const orderProductId = orderItem?.product_id ?? orderItem?.productId ?? orderItem?.id ?? null;
+                if (productId && orderProductId) {
+                    return String(productId) === String(orderProductId);
+                }
+                if (!item?.name && !item?.title) {
+                    return false;
+                }
+                return (orderItem?.name || '').trim() === (item?.name || item?.title || '').trim();
+            });
+            const name = item?.name || item?.title || matched?.name || 'منتج';
+            const price = Number(item?.price ?? matched?.price ?? 0);
+            const quantity = Number(item?.quantity ?? item?.return_quantity ?? 0);
+            return {
+                product_id: productId,
+                name,
+                price,
+                quantity,
+                total: price * quantity
+            };
+        };
+
+        const aggregateReturnItems = (returnsRows, orderItems) => {
+            const aggregate = new Map();
+            let refundTotal = 0;
+            returnsRows.forEach((row) => {
+                const items = typeof row.items === 'string' ? JSON.parse(row.items) : row.items;
+                if (!Array.isArray(items)) return;
+                items.forEach((item) => {
+                    const normalized = normalizeReturnItem(item, orderItems);
+                    if (!normalized.quantity) return;
+                    const key = normalized.product_id ? String(normalized.product_id) : normalized.name;
+                    const existing = aggregate.get(key);
+                    if (existing) {
+                        existing.quantity += normalized.quantity;
+                        existing.total += normalized.total;
+                    } else {
+                        aggregate.set(key, { ...normalized });
+                    }
+                    refundTotal += normalized.total;
+                });
+            });
+            return {
+                items: Array.from(aggregate.values()),
+                total: refundTotal
+            };
+        };
         
         // Check if order is eligible for return
         const orderDate = new Date(order.date);
@@ -205,6 +255,17 @@ router.get('/admin/search-order/:orderId', [verifyToken, isAdmin], async (req, r
         order.can_be_returned = order.status === 'delivered' && daysSinceOrder <= 30;
         order.days_since_order = Math.floor(daysSinceOrder);
         order.already_returned = order.return_count > 0;
+
+        const { rows: returnRows } = await query(`
+            SELECT items
+            FROM returns
+            WHERE order_id = $1 AND status IN ('approved', 'completed')
+            ORDER BY created_at DESC
+        `, [order.id]);
+
+        const aggregatedReturns = aggregateReturnItems(returnRows || [], order.items || []);
+        order.returned_items = aggregatedReturns.items;
+        order.returned_total = aggregatedReturns.total;
         
         res.json({ 
             data: order,

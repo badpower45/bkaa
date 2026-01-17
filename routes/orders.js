@@ -343,15 +343,77 @@ router.get('/:id', verifyToken, async (req, res) => {
         }
 
         const order = rows[0];
+
+        const normalizeReturnItem = (item, orderItems = []) => {
+            const productId = item?.product_id ?? item?.productId ?? item?.id ?? null;
+            const matched = orderItems.find((orderItem) => {
+                const orderProductId = orderItem?.product_id ?? orderItem?.productId ?? orderItem?.id ?? null;
+                if (productId && orderProductId) {
+                    return String(productId) === String(orderProductId);
+                }
+                if (!item?.name && !item?.title) {
+                    return false;
+                }
+                return (orderItem?.name || '').trim() === (item?.name || item?.title || '').trim();
+            });
+            const name = item?.name || item?.title || matched?.name || 'منتج';
+            const price = Number(item?.price ?? matched?.price ?? 0);
+            const quantity = Number(item?.quantity ?? item?.return_quantity ?? 0);
+            return {
+                product_id: productId,
+                name,
+                price,
+                quantity,
+                total: price * quantity
+            };
+        };
+
+        const aggregateReturnItems = (returnsRows, orderItems) => {
+            const aggregate = new Map();
+            let refundTotal = 0;
+            returnsRows.forEach((row) => {
+                const items = typeof row.items === 'string' ? JSON.parse(row.items) : row.items;
+                if (!Array.isArray(items)) return;
+                items.forEach((item) => {
+                    const normalized = normalizeReturnItem(item, orderItems);
+                    if (!normalized.quantity) return;
+                    const key = normalized.product_id ? String(normalized.product_id) : normalized.name;
+                    const existing = aggregate.get(key);
+                    if (existing) {
+                        existing.quantity += normalized.quantity;
+                        existing.total += normalized.total;
+                    } else {
+                        aggregate.set(key, { ...normalized });
+                    }
+                    refundTotal += normalized.total;
+                });
+            });
+            return {
+                items: Array.from(aggregate.values()),
+                total: refundTotal
+            };
+        };
+
+        const orderItems = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
+        const { rows: returnRows } = await query(`
+            SELECT items
+            FROM returns
+            WHERE order_id = $1 AND status IN ('approved', 'completed')
+            ORDER BY created_at DESC
+        `, [order.id]);
+
+        const aggregatedReturns = aggregateReturnItems(returnRows || [], orderItems || []);
         
         res.json({
             message: 'success',
             data: {
                 ...order,
-                items: typeof order.items === 'string' ? JSON.parse(order.items) : order.items,
+                items: orderItems,
                 shipping_info: typeof order.shipping_info === 'string' ? JSON.parse(order.shipping_info) : order.shipping_info,
                 userId: order.user_id,
-                branchId: order.branch_id
+                branchId: order.branch_id,
+                returned_items: aggregatedReturns.items,
+                returned_total: aggregatedReturns.total
             }
         });
     } catch (err) {

@@ -57,6 +57,8 @@ import reviewsRoutes from './routes/reviews.js';
 import customerBlockRoutes from './routes/customerBlock.js';
 import loyaltyBarcodeRoutes from './routes/loyaltyBarcode.js';
 import heroSectionsRoutes from './routes/heroSections.js';
+import paymentRoutes from './routes/payment.js';
+import refundRoutes from './routes/refund.js';
 
 // dotenv is loaded in database.js with the correct path
 // No need to load it again here
@@ -223,6 +225,8 @@ app.use('/api/order-cancellation', orderCancellationRoutes);
 app.use('/api/reviews', reviewLimiter, reviewsRoutes);
 app.use('/api/customer-block', customerBlockRoutes);
 app.use('/api/loyalty-barcode', loyaltyBarcodeRoutes);
+app.use('/api/payment', paymentRoutes);
+app.use('/api/refund', refundRoutes);
 
 // Setup endpoint (for database initialization)
 app.use('/api/setup', setupRoutes);

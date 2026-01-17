@@ -184,7 +184,13 @@ router.post('/dev/fix-prices', [verifyToken, isAdmin], async (req, res) => {
 
 // Get all products (filtered by branch)
 router.get('/', async (req, res) => {
-    const { branchId, category, search, limit, includeAllBranches, includeMagazine } = req.query;
+    const { branchId, category, search, limit, offset, includeAllBranches, includeMagazine } = req.query;
+    
+    // 🔥 إضافة limit و offset للـ pagination
+    const limitValue = limit ? parseInt(limit) : 100; // Default 100 instead of unlimited
+    const offsetValue = offset ? parseInt(offset) : 0;
+    
+    console.log(`📦 Products API - Branch: ${branchId}, Category: ${category || 'All'}, Limit: ${limitValue}, Offset: ${offsetValue}`);
 
     // For admin panel - show all products with their branch data
     if (includeAllBranches === 'true') {
@@ -252,9 +258,14 @@ router.get('/', async (req, res) => {
             
             sql += ` ORDER BY p.id, bp.branch_id NULLS LAST`;
             
-            if (limit) {
-                sql += ` LIMIT $${paramIndex}`;
-                params.push(parseInt(limit));
+            // 🔥 إضافة LIMIT و OFFSET
+            sql += ` LIMIT $${paramIndex}`;
+            params.push(limitValue);
+            paramIndex++;
+            
+            if (offsetValue > 0) {
+                sql += ` OFFSET $${paramIndex}`;
+                params.push(offsetValue);
             }
 
             const { rows } = await query(sql, params);
@@ -348,12 +359,20 @@ router.get('/', async (req, res) => {
         // Add ORDER BY for consistent results
         sql += ` ORDER BY p.id`;
         
-        // Add LIMIT for pagination
-        if (limit) {
-            sql += ` LIMIT $${paramIndex}`;
-            params.push(parseInt(limit));
-            paramIndex++;
+        // 🔥 إضافة LIMIT و OFFSET للـ Pagination
+        sql += ` LIMIT $${paramIndex}`;
+        params.push(limitValue);
+        paramIndex++;
+        
+        if (offsetValue > 0) {
+            sql += ` OFFSET $${paramIndex}`;
+            params.push(offsetValue);
         }
+
+        const { rows } = await query(sql, params);
+        
+        // 🔥 إضافة معلومات Pagination في الـ Response
+        console.log(`✅ Returned ${rows.length} products (Limit: ${limitValue}, Offset: ${offsetValue})`);
 
         const { rows } = await query(sql, params);
 
@@ -676,6 +695,8 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
         ]);
 
         // Add to branch inventory - always add to at least branch 1
+        const targetBranchId = branchId || 1; // Default to branch 1
+        const targetPrice = price || 0; // Default price
         
         const bpSql = `
             INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
