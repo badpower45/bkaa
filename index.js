@@ -225,8 +225,9 @@ app.use('/api/order-cancellation', orderCancellationRoutes);
 app.use('/api/reviews', reviewLimiter, reviewsRoutes);
 app.use('/api/customer-block', customerBlockRoutes);
 app.use('/api/loyalty-barcode', loyaltyBarcodeRoutes);
-app.use('/api/payment', paymentRoutes);
-app.use('/api/refund', refundRoutes);
+// Payment routes - معطل مؤقتًا لحين جمع الداتا
+// app.use('/api/payment', paymentRoutes);
+// app.use('/api/refund', refundRoutes);
 
 // Setup endpoint (for database initialization)
 app.use('/api/setup', setupRoutes);
