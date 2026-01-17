@@ -374,8 +374,6 @@ router.get('/', async (req, res) => {
         // 🔥 إضافة معلومات Pagination في الـ Response
         console.log(`✅ Returned ${rows.length} products (Limit: ${limitValue}, Offset: ${offsetValue})`);
 
-        const { rows } = await query(sql, params);
-
         // Convert is_organic/is_new back to boolean if needed (Postgres returns boolean for BOOLEAN columns usually, but let's be safe)
         // Schema has is_organic BOOLEAN, is_new BOOLEAN. pg driver converts them to JS booleans automatically.
         // However, the previous code mapped them manually. I will keep it clean.
