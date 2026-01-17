@@ -238,10 +238,9 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
             id,
             targetPrice,
             originalPrice || null, // السعر قبل (الأصلي) يُخزن في discount_price
-                stockQuantity || 0,
-                expiryDate || null
-            ]);
-        }
+            stockQuantity || 0,
+            expiryDate || null
+        ]);
 
         await query('COMMIT');
 
