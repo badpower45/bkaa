@@ -182,6 +182,36 @@ router.post('/dev/fix-prices', [verifyToken, isAdmin], async (req, res) => {
     }
 });
 
+// ✅ NEW: Get special offers only (products with discount)
+router.get('/special-offers', async (req, res) => {
+    const { branchId } = req.query;
+    const branch = branchId || 1; // Default branch
+    
+    try {
+        const { rows } = await query(`
+            SELECT DISTINCT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews,
+                   p.is_organic, p.is_new, p.barcode, p.shelf_location, p.subcategory, p.description,
+                   p.frame_overlay_url, p.frame_enabled,
+                   bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id
+            FROM products p
+            INNER JOIN branch_products bp ON p.id = bp.product_id
+            WHERE bp.branch_id = $1
+              AND bp.discount_price IS NOT NULL
+              AND bp.discount_price > 0
+              AND bp.discount_price < bp.price
+              AND bp.is_available = TRUE
+            ORDER BY (bp.price - bp.discount_price) DESC
+            LIMIT 100
+        `, [branch]);
+        
+        console.log(`✨ Special offers loaded: ${rows.length} products with discount`);
+        return res.json({ data: rows });
+    } catch (err) {
+        console.error('Special offers API failed:', err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // Get all products (filtered by branch)
 router.get('/', async (req, res) => {
     const { branchId, category, search, limit, offset, includeAllBranches, includeMagazine } = req.query;
