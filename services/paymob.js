@@ -9,6 +9,7 @@
  */
 
 import axios from 'axios';
+import crypto from 'crypto';
 
 // Paymob API Configuration
 const PAYMOB_CONFIG = {
@@ -138,8 +139,6 @@ export async function initializePayment(orderData, customerData) {
  */
 export function verifyPaymobCallback(callbackData) {
     try {
-        const crypto = require('crypto'); // Use require instead of await import
-        
         const {
             amount_cents,
             created_at,
@@ -188,8 +187,7 @@ export function verifyPaymobCallback(callbackData) {
             success
         ].join('');
 
-        // Calculate HMAC (synchronous import)
-        const crypto = require('crypto');
+        // Calculate HMAC
         const calculatedHmac = crypto
             .createHmac('sha512', PAYMOB_CONFIG.HMAC_SECRET)
             .update(hmacString)
