@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS order_preparation_items (
   product_name TEXT NOT NULL,
   quantity INTEGER NOT NULL,
   is_prepared BOOLEAN DEFAULT FALSE,
+  is_out_of_stock BOOLEAN DEFAULT FALSE,
+  substitution_preference TEXT,
   prepared_at TIMESTAMP,
   prepared_by INTEGER,
   notes TEXT,

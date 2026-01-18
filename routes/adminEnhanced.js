@@ -496,12 +496,19 @@ router.get('/returns', [verifyToken, isAdmin], async (req, res) => {
  */
 router.post('/returns/create-from-order', [verifyToken, isAdmin], async (req, res) => {
     try {
-        const { order_code, return_reason, return_notes } = req.body;
+        const { order_code, return_reason, return_notes, items } = req.body;
         
         if (!order_code || !return_reason) {
             return res.status(400).json({ 
                 success: false, 
                 message: 'كود الطلب وسبب المرتجع مطلوبان' 
+            });
+        }
+        
+        if (!items || !Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'يجب اختيار منتجات مرتجعة - لن يتم استخدام كل منتجات الطلب تلقائياً'
             });
         }
         
@@ -536,8 +543,13 @@ router.post('/returns/create-from-order', [verifyToken, isAdmin], async (req, re
         // Generate return code
         const returnCode = `RET-${Date.now()}-${order.id}`;
         
-        // Get order items
-        const items = order.items || [];
+        // Use only provided return items (الحماية من إرجاع الطلب بالكامل بالخطأ)
+        const normalizedItems = items.map((item) => ({
+            product_id: item.product_id || item.id,
+            name: item.name,
+            price: Number(item.price) || 0,
+            quantity: Number(item.quantity) || 0
+        })).filter((item) => item.quantity > 0);
         
         // Create return
         const { rows: newReturn } = await query(`
@@ -561,7 +573,7 @@ router.post('/returns/create-from-order', [verifyToken, isAdmin], async (req, re
             order.user_id,
             return_reason,
             return_notes || '',
-            JSON.stringify(items),
+            JSON.stringify(normalizedItems),
             order.total,
             0, // Refund amount to be set on approval
             'pending'

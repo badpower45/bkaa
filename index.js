@@ -231,9 +231,9 @@ app.use('/api/loyalty-barcode', loyaltyBarcodeRoutes);
 // app.use('/api/payment', paymentRoutes);
 // app.use('/api/refund', refundRoutes);
 
-// Popups & Category Banners - معطل مؤقتًا
-// app.use('/api/popups', popupsRoutes);
-// app.use('/api/category-banners', categoryBannersRoutes);
+// Popups & Category Banners - تم التفعيل
+app.use('/api/popups', popupsRoutes);
+app.use('/api/category-banners', categoryBannersRoutes);
 
 // Setup endpoint (for database initialization)
 app.use('/api/setup', setupRoutes);

@@ -243,10 +243,12 @@ router.post('/start-preparation/:orderId', verifyToken, async (req, res) => {
             
             // إضافة عناصر التحضير
             for (const item of items) {
+                const substitutionPreference =
+                    item.substitutionPreference || item.substitution_preference || 'none';
                 await query(`
-                    INSERT INTO order_preparation_items (order_id, product_id, product_name, quantity)
-                    VALUES ($1, $2, $3, $4)
-                `, [orderId, item.productId || item.id, item.name || item.title, item.quantity]);
+                    INSERT INTO order_preparation_items (order_id, product_id, product_name, quantity, substitution_preference)
+                    VALUES ($1, $2, $3, $4, $5)
+                `, [orderId, item.productId || item.id, item.name || item.title, item.quantity, substitutionPreference]);
             }
         }
         
@@ -295,19 +297,37 @@ router.get('/preparation-items/:orderId', verifyToken, async (req, res) => {
 // تحديث حالة عنصر تحضير (checkbox)
 router.put('/preparation-items/:itemId', verifyToken, async (req, res) => {
     const { itemId } = req.params;
-    const { isPrepared, notes } = req.body;
+    const { isPrepared, notes, isOutOfStock } = req.body;
     const preparedBy = req.userId;  // Fixed: use req.userId
+
+    let nextPrepared = typeof isPrepared === 'boolean' ? isPrepared : null;
+    let nextOutOfStock = typeof isOutOfStock === 'boolean' ? isOutOfStock : null;
+    if (nextOutOfStock === true) {
+        nextPrepared = false;
+    }
+    if (nextPrepared === true) {
+        nextOutOfStock = false;
+    }
     
     try {
         const { rows } = await query(`
             UPDATE order_preparation_items 
-            SET is_prepared = $1, 
-                prepared_at = CASE WHEN $1 = TRUE THEN CURRENT_TIMESTAMP ELSE NULL END,
-                prepared_by = CASE WHEN $1 = TRUE THEN $2 ELSE NULL END,
-                notes = COALESCE($3, notes)
-            WHERE id = $4
+            SET is_prepared = COALESCE($1, is_prepared), 
+                is_out_of_stock = COALESCE($2, is_out_of_stock),
+                prepared_at = CASE
+                    WHEN $1 = TRUE AND COALESCE($2, is_out_of_stock) = FALSE THEN CURRENT_TIMESTAMP
+                    WHEN $1 = FALSE OR $2 = TRUE THEN NULL
+                    ELSE prepared_at
+                END,
+                prepared_by = CASE
+                    WHEN $1 = TRUE AND COALESCE($2, is_out_of_stock) = FALSE THEN $3
+                    WHEN $1 = FALSE OR $2 = TRUE THEN NULL
+                    ELSE prepared_by
+                END,
+                notes = COALESCE($4, notes)
+            WHERE id = $5
             RETURNING *
-        `, [isPrepared, preparedBy, notes, itemId]);
+        `, [nextPrepared, nextOutOfStock, preparedBy, notes, itemId]);
         
         res.json({ message: 'success', data: rows[0] });
     } catch (err) {
