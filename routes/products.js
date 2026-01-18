@@ -678,7 +678,8 @@ router.get('/barcode/:barcode', async (req, res) => {
 router.post('/', [verifyToken, isAdmin], async (req, res) => {
     const { 
         name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
-        price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation 
+        price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation,
+        frame_overlay_url, frame_enabled
     } = req.body;
     
     // Validation
@@ -704,8 +705,12 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
 
         // Insert product
         const sql = `
-            INSERT INTO products (id, name, category, subcategory, image, weight, description, rating, reviews, is_organic, is_new, barcode, shelf_location)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, $8, $9, $10, $11)
+            INSERT INTO products (
+                id, name, category, subcategory, image, weight, description,
+                rating, reviews, is_organic, is_new, barcode, shelf_location,
+                frame_overlay_url, frame_enabled
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, $8, $9, $10, $11, $12, $13)
             RETURNING *
         `;
         const { rows } = await query(sql, [
@@ -719,7 +724,9 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
             isOrganic ? true : false,
             isNew ? true : false,
             barcode || null,
-            shelfLocation || null
+            shelfLocation || null,
+            frame_overlay_url || null,
+            frame_enabled === true
         ]);
 
         // Add to branch inventory - always add to at least branch 1
@@ -784,7 +791,8 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
 router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
     const { 
         name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
-        price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation 
+        price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation,
+        frame_overlay_url, frame_enabled
     } = req.body;
     
     try {
@@ -801,14 +809,16 @@ router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
                 barcode = COALESCE($7, barcode),
                 is_organic = COALESCE($8, is_organic),
                 is_new = COALESCE($9, is_new),
-                shelf_location = COALESCE($10, shelf_location)
-            WHERE id = $11
+                shelf_location = COALESCE($10, shelf_location),
+                frame_overlay_url = COALESCE($11, frame_overlay_url),
+                frame_enabled = COALESCE($12, frame_enabled)
+            WHERE id = $13
             RETURNING *
         `;
         
         const { rows } = await query(sql, [
             name, category, subcategory, image, weight, description, barcode,
-            isOrganic, isNew, shelfLocation, req.params.id
+            isOrganic, isNew, shelfLocation, frame_overlay_url, frame_enabled, req.params.id
         ]);
 
         if (rows.length === 0) {
