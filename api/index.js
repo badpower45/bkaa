@@ -730,13 +730,135 @@ app.get('/api/branches/:id', async (req, res) => {
     try {
         const { rows } = await query('SELECT * FROM branches WHERE id = $1', [req.params.id]);
         if (!rows[0]) return res.status(404).json({ error: 'Branch not found' });
-        res.json(rows[0]);
+        res.json({ data: rows[0] });
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch branch' });
     }
 });
 
+// ===================== DELIVERY TRACKING =====================
+
+// Get all active delivery drivers with their current locations (Admin only)
+app.get('/api/admin/delivery-drivers', verifyToken, async (req, res) => {
+    if (req.userRole !== 'admin' && req.userRole !== 'manager') {
+        return res.status(403).json({ error: 'Admin only' });
+    }
+
+    try {
+        const { rows } = await query(`
+            SELECT 
+                u.id,
+                u.name,
+                u.phone,
+                u.assigned_branch_id,
+                b.name as branch_name,
+                o.id as current_order_id,
+                o.order_code,
+                o.status as order_status,
+                o.delivery_latitude,
+                o.delivery_longitude,
+                o.shipping_info,
+                o.created_at as order_created_at
+            FROM users u
+            LEFT JOIN branches b ON u.assigned_branch_id = b.id
+            LEFT JOIN orders o ON o.delivery_user_id = u.id 
+                AND o.status IN ('preparing', 'on_the_way', 'out_for_delivery')
+            WHERE u.role = 'delivery'
+            ORDER BY u.name ASC
+        `);
+        
+        res.json({ success: true, data: rows });
+    } catch (err) {
+        console.error('Error fetching delivery drivers:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch delivery drivers' });
+    }
+});
+
+// Get delivery locations for map visualization (Admin only)
+app.get('/api/admin/delivery-map', verifyToken, async (req, res) => {
+    if (req.userRole !== 'admin' && req.userRole !== 'manager') {
+        return res.status(403).json({ error: 'Admin only' });
+    }
+
+    try {
+        // Get branches with their locations
+        const { rows: branches } = await query(`
+            SELECT id, name, address, location_lat, location_lng, phone
+            FROM branches
+            WHERE is_active = true AND location_lat IS NOT NULL AND location_lng IS NOT NULL
+        `);
+
+        // Get active deliveries
+        const { rows: deliveries } = await query(`
+            SELECT 
+                o.id,
+                o.order_code,
+                o.status,
+                o.delivery_latitude,
+                o.delivery_longitude,
+                o.shipping_info,
+                o.total,
+                o.created_at,
+                u.name as customer_name,
+                u.phone as customer_phone,
+                d.name as driver_name,
+                d.phone as driver_phone,
+                b.name as branch_name
+            FROM orders o
+            LEFT JOIN users u ON o.user_id = u.id
+            LEFT JOIN users d ON o.delivery_user_id = d.id
+            LEFT JOIN branches b ON o.branch_id = b.id
+            WHERE o.status IN ('preparing', 'on_the_way', 'out_for_delivery')
+                AND o.delivery_latitude IS NOT NULL 
+                AND o.delivery_longitude IS NOT NULL
+            ORDER BY o.created_at DESC
+        `);
+
+        res.json({ 
+            success: true, 
+            data: {
+                branches,
+                deliveries
+            }
+        });
+    } catch (err) {
+        console.error('Error fetching delivery map data:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch delivery map data' });
+    }
+});
+
 // ===================== CATEGORIES =====================
+
+// Admin: Get all categories (including inactive)
+app.get('/api/categories/admin/all', async (req, res) => {
+    try {
+        const includeOfferOnly = req.query.includeOfferOnly === 'true';
+        const offerOnlyClause = includeOfferOnly
+            ? ''
+            : 'AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)';
+
+        const { rows } = await query(`
+            SELECT 
+                c.*,
+                COUNT(DISTINCT p.id) as products_count
+            FROM categories c
+            LEFT JOIN products p ON (
+                (
+                    TRIM(LOWER(p.category)) = TRIM(LOWER(c.name))
+                    OR TRIM(LOWER(p.category)) = TRIM(LOWER(c.name_ar))
+                )
+                ${offerOnlyClause}
+            )
+            GROUP BY c.id
+            ORDER BY c.display_order ASC, c.name ASC
+        `);
+        
+        res.json({ success: true, data: rows });
+    } catch (err) {
+        console.error('Error fetching admin categories:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch categories' });
+    }
+});
 
 app.get('/api/categories', async (req, res) => {
     try {
