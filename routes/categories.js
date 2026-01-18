@@ -171,6 +171,12 @@ router.post('/', async (req, res) => {
             icon,
             bg_color = 'bg-orange-50',
             description,
+            banner_image,
+            banner_title,
+            banner_subtitle,
+            banner_type,
+            banner_action_url,
+            banner_button_text,
             parent_id,
             display_order = 0,
             is_active = true
@@ -184,10 +190,30 @@ router.post('/', async (req, res) => {
         const finalParentId = parent_id !== undefined && parent_id !== '' ? parent_id : null;
         
         const result = await pool.query(`
-            INSERT INTO categories (name, name_ar, image, icon, bg_color, description, parent_id, display_order, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO categories (
+                name, name_ar, image, icon, bg_color, description,
+                banner_image, banner_title, banner_subtitle, banner_type, banner_action_url, banner_button_text,
+                parent_id, display_order, is_active
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING *
-        `, [name, name_ar || name, image, icon, bg_color, description, finalParentId, display_order, is_active]);
+        `, [
+            name,
+            name_ar || name,
+            image,
+            icon,
+            bg_color,
+            description,
+            banner_image,
+            banner_title,
+            banner_subtitle,
+            banner_type,
+            banner_action_url,
+            banner_button_text,
+            finalParentId,
+            display_order,
+            is_active
+        ]);
         
         res.json({ success: true, data: result.rows[0] });
     } catch (error) {
@@ -210,6 +236,12 @@ router.put('/:id', async (req, res) => {
             icon,
             bg_color,
             description,
+            banner_image,
+            banner_title,
+            banner_subtitle,
+            banner_type,
+            banner_action_url,
+            banner_button_text,
             parent_id,
             display_order,
             is_active
@@ -223,13 +255,36 @@ router.put('/:id', async (req, res) => {
                 icon = COALESCE($4, icon),
                 bg_color = COALESCE($5, bg_color),
                 description = COALESCE($6, description),
-                parent_id = $7,
-                display_order = COALESCE($8, display_order),
-                is_active = COALESCE($9, is_active),
+                banner_image = COALESCE($7, banner_image),
+                banner_title = COALESCE($8, banner_title),
+                banner_subtitle = COALESCE($9, banner_subtitle),
+                banner_type = COALESCE($10, banner_type),
+                banner_action_url = COALESCE($11, banner_action_url),
+                banner_button_text = COALESCE($12, banner_button_text),
+                parent_id = $13,
+                display_order = COALESCE($14, display_order),
+                is_active = COALESCE($15, is_active),
                 updated_at = NOW()
-            WHERE id = $10
+            WHERE id = $16
             RETURNING *
-        `, [name, name_ar, image, icon, bg_color, description, parent_id, display_order, is_active, id]);
+        `, [
+            name,
+            name_ar,
+            image,
+            icon,
+            bg_color,
+            description,
+            banner_image,
+            banner_title,
+            banner_subtitle,
+            banner_type,
+            banner_action_url,
+            banner_button_text,
+            parent_id,
+            display_order,
+            is_active,
+            id
+        ]);
         
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, error: 'Category not found' });

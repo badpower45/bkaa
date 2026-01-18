@@ -4,6 +4,12 @@ CREATE TABLE IF NOT EXISTS categories (
     name VARCHAR(100) NOT NULL UNIQUE,
     name_ar VARCHAR(100),
     image TEXT, -- رابط صورة التصنيف
+    banner_image TEXT, -- رابط صورة بانر التصنيف
+    banner_title TEXT, -- عنوان البانر
+    banner_subtitle TEXT, -- نص فرعي للبانر
+    banner_type VARCHAR(20) DEFAULT 'display', -- display أو action
+    banner_action_url TEXT, -- رابط زر البانر
+    banner_button_text TEXT, -- نص زر البانر
     icon VARCHAR(10), -- Emoji icon
     bg_color VARCHAR(50) DEFAULT 'bg-orange-50', -- Tailwind background color class
     description TEXT,
