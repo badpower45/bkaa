@@ -80,6 +80,10 @@ router.post('/', verifyToken, isAdmin, async (req, res) => {
             return res.status(400).json({ error: 'Title and image_url are required' });
         }
         
+        // Convert empty strings to null for date fields
+        const startDate = start_date && start_date.trim() !== '' ? start_date : null;
+        const endDate = end_date && end_date.trim() !== '' ? end_date : null;
+        
         const { rows } = await query(`
             INSERT INTO popups (
                 title, title_ar, description, description_ar,
@@ -91,7 +95,7 @@ router.post('/', verifyToken, isAdmin, async (req, res) => {
         `, [
             title, title_ar, description, description_ar,
             image_url, link_url, button_text, button_text_ar,
-            start_date, end_date, is_active, priority,
+            startDate, endDate, is_active, priority,
             show_on_homepage, show_on_products
         ]);
         
@@ -120,6 +124,10 @@ router.put('/:id', verifyToken, isAdmin, async (req, res) => {
             show_on_homepage, show_on_products
         } = req.body;
         
+        // Convert empty strings to null for date fields
+        const startDate = start_date && start_date.trim() !== '' ? start_date : null;
+        const endDate = end_date && end_date.trim() !== '' ? end_date : null;
+        
         const { rows } = await query(`
             UPDATE popups SET
                 title = COALESCE($1, title),
@@ -130,8 +138,8 @@ router.put('/:id', verifyToken, isAdmin, async (req, res) => {
                 link_url = COALESCE($6, link_url),
                 button_text = COALESCE($7, button_text),
                 button_text_ar = COALESCE($8, button_text_ar),
-                start_date = COALESCE($9, start_date),
-                end_date = COALESCE($10, end_date),
+                start_date = $9,
+                end_date = $10,
                 is_active = COALESCE($11, is_active),
                 priority = COALESCE($12, priority),
                 show_on_homepage = COALESCE($13, show_on_homepage),
@@ -142,7 +150,7 @@ router.put('/:id', verifyToken, isAdmin, async (req, res) => {
         `, [
             title, title_ar, description, description_ar,
             image_url, link_url, button_text, button_text_ar,
-            start_date, end_date, is_active, priority,
+            startDate, endDate, is_active, priority,
             show_on_homepage, show_on_products, id
         ]);
         
