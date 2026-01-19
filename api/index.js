@@ -1106,17 +1106,49 @@ app.get('/api/admin/users', verifyToken, async (req, res) => {
 
 // Get all orders (admin)
 app.get('/api/admin/orders', verifyToken, async (req, res) => {
-    if (req.userRole !== 'admin') return res.status(403).json({ error: 'Admin only' });
     try {
+        // Allow admin and manager roles
+        if (!['admin', 'manager'].includes(req.userRole)) {
+            return res.status(403).json({ error: 'Admin or Manager access only' });
+        }
+
         const { rows } = await query(
-            `SELECT o.*, u.name as user_name, u.email as user_email
+            `SELECT 
+                o.id,
+                o.customer_id,
+                o.status,
+                o.total,
+                o.delivery_address,
+                o.delivery_latitude,
+                o.delivery_longitude,
+                o.created_at,
+                o.updated_at,
+                o.delivery_driver_id,
+                u.name as customer_name,
+                u.phone as customer_phone,
+                u.email as customer_email,
+                d.name as driver_name,
+                d.phone as driver_phone
              FROM orders o
-             LEFT JOIN users u ON o.user_id = u.id
+             LEFT JOIN users u ON o.customer_id = u.id
+             LEFT JOIN delivery_staff d ON o.delivery_driver_id = d.id
              ORDER BY o.created_at DESC`
         );
-        res.json(rows);
+        
+        console.log(`✅ Loaded ${rows.length} orders for admin`);
+        
+        res.json({ 
+            success: true,
+            orders: rows,
+            total: rows.length 
+        });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to fetch orders' });
+        console.error('❌ Error fetching admin orders:', err);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to fetch orders', 
+            details: err.message 
+        });
     }
 });
 
