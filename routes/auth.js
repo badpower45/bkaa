@@ -132,7 +132,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 
         if (!passwordIsValid) return res.status(401).send({ auth: false, token: null });
 
-        const token = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, { expiresIn: 86400 });
+        const token = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, { expiresIn: '7d' }); // 7 days
 
         res.status(200).send({
             auth: true,
@@ -209,7 +209,7 @@ router.post('/refresh-token', async (req, res) => {
 
     try {
         const decoded = jwt.verify(token, SECRET_KEY);
-        const newToken = jwt.sign({ id: decoded.id, role: decoded.role }, SECRET_KEY, { expiresIn: 86400 });
+        const newToken = jwt.sign({ id: decoded.id, role: decoded.role }, SECRET_KEY, { expiresIn: '7d' }); // 7 days
         
         res.status(200).send({
             auth: true,

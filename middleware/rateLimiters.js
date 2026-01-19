@@ -4,28 +4,30 @@ import rateLimit from 'express-rate-limit';
 // Orders rate limiter - prevent order spam
 export const ordersLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // 5 orders per 15 minutes per IP
-    message: { error: 'Too many orders created. Please try again in 15 minutes.' },
+    max: 100, // 100 operations per 15 minutes per IP (more lenient for admin)
+    message: { error: 'Too many operations. Please try again in a moment.' },
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req) => {
-        // Skip for admin users
-        return req.user && req.user.role === 'admin';
+        // Skip for admin/manager users
+        return req.user && (req.user.role === 'admin' || req.user.role === 'manager');
     }
 });
 
 // Cart operations limiter
 export const cartLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 minute
-    max: 30, // 30 operations per minute
-    message: { error: 'Too many cart operations. Please slow down.' }
+    max: 100, // 100 operations per minute
+    message: { error: 'Too many cart operations. Please slow down.' },
+    skip: (req) => req.user && (req.user.role === 'admin' || req.user.role === 'manager')
 });
 
 // Search limiter
 export const searchLimiter = rateLimit({
     windowMs: 1 * 60 * 1000,
-    max: 20, // 20 searches per minute
-    message: { error: 'Too many searches. Please wait a moment.' }
+    max: 60, // 60 searches per minute
+    message: { error: 'Too many searches. Please wait a moment.' },
+    skip: (req) => req.user && (req.user.role === 'admin' || req.user.role === 'manager')
 });
 
 // Returns limiter
