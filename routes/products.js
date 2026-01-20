@@ -188,9 +188,12 @@ router.get('/special-offers', async (req, res) => {
     const branch = branchId || 1; // Default branch
     
     try {
+        // Add cache headers - 6 hours for special offers
+        res.set('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=300, max-age=600');
+        
         const { rows } = await query(`
             SELECT DISTINCT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews,
-                   p.is_organic, p.is_new, p.barcode, p.shelf_location, p.subcategory, p.description,
+                   p.is_organic, p.is_new,
                    p.frame_overlay_url, p.frame_enabled,
                    bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id
             FROM products p
@@ -318,8 +321,8 @@ router.get('/', async (req, res) => {
     }
 
     try {
-        // Add cache headers for better performance
-        res.set('Cache-Control', 'public, max-age=60'); // Cache for 1 minute
+        // Add cache headers - 6 hours cache for aggressive optimization
+        res.set('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=300, max-age=600');
         
         const params = [branchId];
         let paramIndex = 2;
@@ -345,7 +348,7 @@ router.get('/', async (req, res) => {
 
         let sql = `
             ${categoryCte}
-            SELECT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, p.is_organic, p.is_new, p.barcode, p.shelf_location,
+            SELECT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, p.is_organic, p.is_new,
                    p.frame_overlay_url, p.frame_enabled,
                    bp.price, bp.discount_price, bp.stock_quantity, bp.is_available,
                    (mo.id IS NOT NULL) AS in_magazine
