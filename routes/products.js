@@ -219,11 +219,14 @@ router.get('/special-offers', async (req, res) => {
 router.get('/', async (req, res) => {
     const { branchId, category, search, limit, offset, includeAllBranches, includeMagazine } = req.query;
     
-    // 🔥 إضافة limit و offset للـ pagination
-    const limitValue = limit ? parseInt(limit) : 100; // Default 100 instead of unlimited
+    // 🔥 For admin panel: no limit (get all products)
+    // For users: default 100 products
+    const limitValue = includeAllBranches === 'true' 
+        ? (limit ? parseInt(limit) : 10000) // Admin: get up to 10k products
+        : (limit ? parseInt(limit) : 100);   // Users: default 100
     const offsetValue = offset ? parseInt(offset) : 0;
     
-    console.log(`📦 Products API - Branch: ${branchId}, Category: ${category || 'All'}, Limit: ${limitValue}, Offset: ${offsetValue}`);
+    console.log(`📦 Products API - Branch: ${branchId}, Category: ${category || 'All'}, Limit: ${limitValue}, Offset: ${offsetValue}, Admin: ${includeAllBranches === 'true'}`);
 
     // For admin panel - show all products with their branch data
     if (includeAllBranches === 'true') {
@@ -348,10 +351,19 @@ router.get('/', async (req, res) => {
 
         let sql = `
             ${categoryCte}
-            SELECT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, p.is_organic, p.is_new,
-                   p.frame_overlay_url, p.frame_enabled,
-                   bp.price, bp.discount_price, bp.stock_quantity, bp.is_available,
-                   (mo.id IS NOT NULL) AS in_magazine
+            SELECT 
+                p.id AS i,
+                p.name AS n,
+                p.category AS c,
+                p.image AS im,
+                p.weight AS w,
+                CASE WHEN p.rating > 0 THEN p.rating ELSE NULL END AS r,
+                CASE WHEN p.reviews > 0 THEN p.reviews ELSE NULL END AS rv,
+                CASE WHEN p.frame_enabled = TRUE THEN p.frame_overlay_url ELSE NULL END AS fo,
+                bp.price AS p,
+                bp.discount_price AS dp,
+                bp.stock_quantity AS sq,
+                CASE WHEN (mo.id IS NOT NULL) THEN 1 ELSE NULL END AS mg
         FROM products p
             JOIN branch_products bp ON p.id = bp.product_id
             ${categoryJoin}
@@ -404,16 +416,83 @@ router.get('/', async (req, res) => {
 
         const { rows } = await query(sql, params);
         
-        // 🔥 إضافة معلومات Pagination في الـ Response
-        console.log(`✅ Returned ${rows.length} products (Limit: ${limitValue}, Offset: ${offsetValue})`);
-
-        // Convert is_organic/is_new back to boolean if needed (Postgres returns boolean for BOOLEAN columns usually, but let's be safe)
-        // Schema has is_organic BOOLEAN, is_new BOOLEAN. pg driver converts them to JS booleans automatically.
-        // However, the previous code mapped them manually. I will keep it clean.
+        // 🔥 Get total count for pagination (without LIMIT/OFFSET)
+        let countSql = `
+            ${categoryCte}
+            SELECT COUNT(DISTINCT p.id) as total
+            FROM products p
+            JOIN branch_products bp ON p.id = bp.product_id
+            ${categoryJoin}
+            LEFT JOIN magazine_offers mo ON mo.product_id = p.id 
+                AND mo.is_active = TRUE 
+                AND (mo.start_date IS NULL OR mo.start_date <= NOW())
+                AND (mo.end_date IS NULL OR mo.end_date >= NOW())
+            WHERE bp.branch_id = $1 AND bp.is_available = TRUE
+        `;
+        
+        const countParams = [branchId];
+        let countParamIndex = 2;
+        
+        if (category && category !== 'All') {
+            countParams.push(category);
+            countSql += ` AND (
+                normalize_arabic_text(p.category) = normalize_arabic_text($${countParamIndex})
+                OR p.category = $${countParamIndex}
+                OR (
+                    c.id IS NOT NULL
+                    AND (
+                        normalize_arabic_text(p.category) = normalize_arabic_text(c.name)
+                        OR normalize_arabic_text(p.category) = normalize_arabic_text(c.name_ar)
+                        OR p.category = c.name
+                        OR p.category = c.name_ar
+                    )
+                )
+            )`;
+            countParamIndex++;
+        }
+        
+        if (search) {
+            countSql += ` AND (p.name ILIKE $${countParamIndex} OR p.description ILIKE $${countParamIndex})`;
+            countParams.push(`%${search}%`);
+            countParamIndex++;
+        }
+        
+        if (includeMagazine !== 'true') {
+            countSql += ` AND mo.id IS NULL`;
+        }
+        
+        const countResult = await query(countSql, countParams);
+        const totalCount = parseInt(countResult.rows[0]?.total || 0);
+        
+        // 🔥 Remove NULL/empty values to save bandwidth (Amazon strategy)
+        const cleanedRows = rows.map(row => {
+            const cleaned = {};
+            Object.keys(row).forEach(key => {
+                const value = row[key];
+                // Only include non-null, non-undefined, non-empty values
+                if (value !== null && value !== undefined && value !== '' && value !== false && value !== 0) {
+                    cleaned[key] = value;
+                } else if (value === 0 && (key === 'p' || key === 'dp')) {
+                    // Keep price even if 0
+                    cleaned[key] = value;
+                }
+            });
+            return cleaned;
+        });
+        
+        console.log(`✅ Returned ${rows.length} products (Limit: ${limitValue}, Offset: ${offsetValue}, Total: ${totalCount})`);
+        console.log(`📦 Avg size: ${JSON.stringify(cleanedRows[0] || {}).length} bytes/product`);
 
         res.json({
             "message": "success",
-            "data": rows
+            "data": cleanedRows,
+            "pagination": {
+                "total": totalCount,
+                "limit": limitValue,
+                "offset": offsetValue,
+                "page": Math.floor(offsetValue / limitValue) + 1,
+                "totalPages": Math.ceil(totalCount / limitValue)
+            }
         });
     } catch (err) {
         console.error("Error fetching products:", err);
