@@ -359,7 +359,11 @@ router.get('/', async (req, res) => {
                 p.weight AS w,
                 CASE WHEN p.rating > 0 THEN p.rating ELSE NULL END AS r,
                 CASE WHEN p.reviews > 0 THEN p.reviews ELSE NULL END AS rv,
-                CASE WHEN p.frame_enabled = TRUE THEN p.frame_overlay_url ELSE NULL END AS fo,
+                CASE 
+                    WHEN p.frame_enabled = TRUE AND p.frame_overlay_url LIKE 'http%' 
+                    THEN p.frame_overlay_url 
+                    ELSE NULL 
+                END AS fo,
                 bp.price AS p,
                 bp.discount_price AS dp,
                 bp.stock_quantity AS sq,
