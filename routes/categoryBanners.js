@@ -75,6 +75,53 @@ router.get('/category-name/:categoryName', async (req, res) => {
  * GET /api/category-banners
  * الحصول على كل البانرات (Admin فقط)
  */
+router.get('/admin/list', verifyToken, isAdmin, async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 100;
+        const offset = (page - 1) * limit;
+
+        const { rows } = await query(`
+            SELECT 
+                cb.id,
+                cb.category_id,
+                cb.category_name,
+                cb.category_name_ar,
+                cb.link_url,
+                cb.title,
+                cb.title_ar,
+                cb.subtitle,
+                cb.subtitle_ar,
+                cb.background_color,
+                cb.text_color,
+                cb.priority,
+                cb.is_active,
+                c.name as category_name_from_db,
+                c.name_ar as category_name_ar_from_db
+            FROM category_banners cb
+            LEFT JOIN categories c ON cb.category_id = c.id
+            ORDER BY cb.priority DESC, cb.created_at DESC
+            LIMIT $1 OFFSET $2
+        `, [limit, offset]);
+
+        const { rows: countRows } = await query(`
+            SELECT COUNT(*) as total
+            FROM category_banners
+        `);
+
+        res.json({
+            success: true,
+            data: rows,
+            page,
+            total: parseInt(countRows[0].total),
+            limit
+        });
+    } catch (err) {
+        console.error('Error fetching category banners list:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 router.get('/', verifyToken, isAdmin, async (req, res) => {
     try {
         const { rows } = await query(`

@@ -4,6 +4,54 @@ import pool from '../database.js';
 const router = express.Router();
 
 // Admin: Get all categories (including inactive) - MUST BE BEFORE /:id
+router.get('/admin/list', async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 100;
+        const offset = (page - 1) * limit;
+
+        const result = await pool.query(`
+            SELECT 
+                c.id,
+                c.name,
+                c.name_ar,
+                c.icon,
+                c.bg_color,
+                c.display_order,
+                c.is_active,
+                c.parent_id,
+                CASE WHEN c.banner_image IS NULL THEN false ELSE true END as has_banner,
+                COUNT(DISTINCT p.id) as products_count
+            FROM categories c
+            LEFT JOIN products p ON (
+                normalize_arabic_text(p.category) = normalize_arabic_text(c.name_ar)
+                OR normalize_arabic_text(p.category) = normalize_arabic_text(c.name)
+                OR p.category = c.name
+                OR p.category = c.name_ar
+            ) AND (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
+            GROUP BY c.id
+            ORDER BY c.display_order ASC, c.name ASC
+            LIMIT $1 OFFSET $2
+        `, [limit, offset]);
+
+        const countResult = await pool.query(`
+            SELECT COUNT(*) as total
+            FROM categories
+        `);
+
+        res.json({
+            success: true,
+            data: result.rows,
+            page,
+            total: parseInt(countResult.rows[0].total),
+            limit
+        });
+    } catch (error) {
+        console.error('Error fetching admin category list:', error);
+        res.status(500).json({ success: false, error: 'Failed to fetch categories' });
+    }
+});
+
 router.get('/admin/all', async (req, res) => {
     try {
         const includeOfferOnly = req.query.includeOfferOnly === 'true';

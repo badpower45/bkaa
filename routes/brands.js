@@ -276,6 +276,50 @@ router.get('/:id/products', async (req, res) => {
 
 // ============ ADMIN ROUTES ============
 
+// Get brands list for admin (lightweight)
+router.get('/admin/list', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50;
+        const offset = (page - 1) * limit;
+
+        const { rows } = await query(`
+            SELECT 
+                b.id,
+                b.name_ar,
+                b.name_en,
+                b.is_active,
+                b.is_featured,
+                b.display_order,
+                b.primary_color,
+                b.secondary_color,
+                b.created_at,
+                COUNT(DISTINCT p.id) as products_count
+            FROM brands b
+            LEFT JOIN products p ON p.brand_id = b.id
+            GROUP BY b.id
+            ORDER BY b.display_order ASC, b.created_at DESC
+            LIMIT $1 OFFSET $2
+        `, [limit, offset]);
+
+        const { rows: countRows } = await query(`
+            SELECT COUNT(*) as total
+            FROM brands
+        `);
+
+        res.json({
+            data: rows,
+            page,
+            total: parseInt(countRows[0].total),
+            limit,
+            message: 'success'
+        });
+    } catch (err) {
+        console.error('Error fetching admin brand list:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Get all brands (admin)
 router.get('/admin/all', [verifyToken, isAdmin], async (req, res) => {
     try {
@@ -600,4 +644,3 @@ router.post('/admin/auto-assign-all', [verifyToken, isAdmin], async (req, res) =
 });
 
 export default router;
-

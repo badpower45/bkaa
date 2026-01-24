@@ -67,6 +67,69 @@ router.get('/categories', async (req, res) => {
     }
 });
 
+// Admin: Get magazine offers list (lightweight)
+router.get('/admin/list', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 200;
+        const offset = (page - 1) * limit;
+
+        const { rows } = await query(`
+            SELECT 
+                id,
+                name,
+                name_en,
+                price,
+                old_price,
+                unit,
+                discount_percentage,
+                category,
+                bg_color,
+                product_id,
+                branch_id,
+                is_active,
+                start_date,
+                end_date,
+                sort_order,
+                created_at
+            FROM magazine_offers
+            ORDER BY sort_order ASC, created_at DESC
+            LIMIT $1 OFFSET $2
+        `, [limit, offset]);
+
+        const { rows: countRows } = await query(`
+            SELECT COUNT(*) as total
+            FROM magazine_offers
+        `);
+
+        res.json({
+            success: true,
+            data: rows,
+            page,
+            total: parseInt(countRows[0].total),
+            limit
+        });
+    } catch (err) {
+        console.error('Error fetching admin magazine offers list:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin: Get single magazine offer (full data)
+router.get('/:id', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { rows } = await query('SELECT * FROM magazine_offers WHERE id = $1', [id]);
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Offer not found' });
+        }
+        res.json({ success: true, data: rows[0] });
+    } catch (err) {
+        console.error('Error fetching magazine offer:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Admin: Create magazine offer
 router.post('/', [verifyToken, isAdmin], async (req, res) => {
     try {

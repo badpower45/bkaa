@@ -35,6 +35,59 @@ router.get('/admin', [verifyToken, isAdmin], async (req, res) => {
     }
 });
 
+// Get brand offers list for admin (lightweight)
+router.get('/admin/list', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 200;
+        const offset = (page - 1) * limit;
+
+        const { rows } = await query(`
+            SELECT 
+                id,
+                title,
+                title_ar,
+                subtitle,
+                subtitle_ar,
+                discount_text,
+                discount_text_ar,
+                background_type,
+                background_value,
+                text_color,
+                badge_color,
+                badge_text_color,
+                linked_product_id,
+                linked_brand_id,
+                link_type,
+                custom_link,
+                is_active,
+                display_order,
+                starts_at,
+                expires_at,
+                created_at
+            FROM brand_offers 
+            ORDER BY display_order ASC
+            LIMIT $1 OFFSET $2
+        `, [limit, offset]);
+
+        const { rows: countRows } = await query(`
+            SELECT COUNT(*) as total
+            FROM brand_offers
+        `);
+
+        res.json({
+            data: rows,
+            page,
+            total: parseInt(countRows[0].total),
+            limit,
+            message: 'success'
+        });
+    } catch (err) {
+        console.error('Error fetching admin brand offer list:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Get single brand offer
 router.get('/:id', async (req, res) => {
     try {

@@ -77,6 +77,69 @@ router.get('/flash', async (req, res) => {
     }
 });
 
+// Admin: Get hot deals list (lightweight)
+router.get('/admin/list', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 200;
+        const offset = (page - 1) * limit;
+
+        const { rows } = await query(`
+            SELECT 
+                id,
+                name,
+                name_en,
+                price,
+                old_price,
+                discount_percentage,
+                sold_percentage,
+                total_quantity,
+                sold_quantity,
+                end_time,
+                is_flash_deal,
+                is_active,
+                product_id,
+                branch_id,
+                sort_order,
+                created_at
+            FROM hot_deals
+            ORDER BY is_flash_deal DESC, sort_order ASC, created_at DESC
+            LIMIT $1 OFFSET $2
+        `, [limit, offset]);
+
+        const { rows: countRows } = await query(`
+            SELECT COUNT(*) as total
+            FROM hot_deals
+        `);
+
+        res.json({
+            success: true,
+            data: rows,
+            page,
+            total: parseInt(countRows[0].total),
+            limit
+        });
+    } catch (err) {
+        console.error('Error fetching admin hot deals list:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin: Get single hot deal (full data)
+router.get('/:id', [verifyToken, isAdmin], async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { rows } = await query('SELECT * FROM hot_deals WHERE id = $1', [id]);
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Deal not found' });
+        }
+        res.json({ success: true, data: rows[0] });
+    } catch (err) {
+        console.error('Error fetching hot deal:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Admin: Create hot deal
 router.post('/', [verifyToken, isAdmin], async (req, res) => {
     try {

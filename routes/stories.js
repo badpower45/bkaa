@@ -22,6 +22,51 @@ router.get('/admin/all', async (req, res) => {
     }
 });
 
+// Get stories list for admin (lightweight, no media_url)
+router.get('/admin/list', async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 200;
+        const offset = (page - 1) * limit;
+
+        const result = await pool.query(`
+            SELECT 
+                s.id,
+                s.user_id,
+                s.circle_name,
+                s.title,
+                s.media_type,
+                s.duration,
+                s.link_url,
+                s.link_text,
+                s.views_count,
+                s.is_active,
+                s.priority,
+                s.expires_at,
+                s.created_at,
+                s.branch_id,
+                u.name as user_name
+            FROM stories s
+            LEFT JOIN users u ON s.user_id = u.id
+            ORDER BY s.created_at DESC
+            LIMIT $1 OFFSET $2
+        `, [limit, offset]);
+
+        const countResult = await pool.query(`SELECT COUNT(*) as total FROM stories`);
+
+        res.json({
+            success: true,
+            data: result.rows,
+            page,
+            total: parseInt(countResult.rows[0].total),
+            limit
+        });
+    } catch (error) {
+        console.error('Error fetching admin stories list:', error);
+        res.status(500).json({ success: false, error: 'Failed to fetch stories' });
+    }
+});
+
 // Get all active stories
 router.get('/', async (req, res) => {
     try {

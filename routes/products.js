@@ -217,62 +217,99 @@ router.get('/special-offers', async (req, res) => {
 
 // Admin list view: lightweight products (exclude image/description)
 router.get('/admin/list', [verifyToken, isAdmin], async (req, res) => {
-    const { branchId, page, limit } = req.query;
+    const { branchId, page, limit, search } = req.query;
     const branchValue = branchId ? parseInt(branchId, 10) : null;
     const pageRaw = parseInt(page, 10);
     const limitRaw = parseInt(limit, 10);
     const pageValue = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
     const limitValue = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 50;
     const offsetValue = (pageValue - 1) * limitValue;
+    const searchTerm = typeof search === 'string' ? search.trim() : '';
+    const hasSearch = searchTerm.length > 0;
+    const searchValue = `%${searchTerm}%`;
 
     try {
         let sql;
         let countSql;
         let params = [];
+        let countParams = [];
 
         if (branchValue) {
+            const where = [`bp.branch_id = $1`];
+            params = [branchValue];
+            countParams = [branchValue];
+            let paramIndex = 2;
+
+            if (hasSearch) {
+                where.push(`(p.name ILIKE $${paramIndex} OR p.name_ar ILIKE $${paramIndex} OR p.barcode ILIKE $${paramIndex})`);
+                params.push(searchValue);
+                countParams.push(searchValue);
+                paramIndex++;
+            }
+
+            const limitParamIndex = paramIndex;
+            const offsetParamIndex = paramIndex + 1;
+            params.push(limitValue, offsetValue);
+
             sql = `
                 SELECT p.id,
                        p.name,
+                       p.name_ar,
+                       p.barcode,
                        p.category AS category_id,
                        COALESCE(bp.price, 0) AS price,
                        COALESCE(bp.stock_quantity, 0) AS stock
                 FROM products p
                 JOIN branch_products bp
-                  ON p.id = bp.product_id AND bp.branch_id = $1
+                  ON p.id = bp.product_id
+                WHERE ${where.join(' AND ')}
                 ORDER BY p.id
-                LIMIT $2 OFFSET $3
+                LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}
             `;
             countSql = `
                 SELECT COUNT(*) AS total
                 FROM products p
                 JOIN branch_products bp
-                  ON p.id = bp.product_id AND bp.branch_id = $1
+                  ON p.id = bp.product_id
+                WHERE ${where.join(' AND ')}
             `;
-            params = [branchValue, limitValue, offsetValue];
         } else {
+            const where = [];
+            if (hasSearch) {
+                where.push(`(p.name ILIKE $1 OR p.name_ar ILIKE $1 OR p.barcode ILIKE $1)`);
+                params = [searchValue];
+                countParams = [searchValue];
+            }
+            const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+            const limitParamIndex = hasSearch ? 2 : 1;
+            const offsetParamIndex = hasSearch ? 3 : 2;
+            params.push(limitValue, offsetValue);
+
             sql = `
                 SELECT p.id,
                        p.name,
+                       p.name_ar,
+                       p.barcode,
                        p.category AS category_id,
                        COALESCE(MAX(bp.price), 0) AS price,
                        COALESCE(SUM(bp.stock_quantity), 0) AS stock
                 FROM products p
                 LEFT JOIN branch_products bp ON p.id = bp.product_id
+                ${whereClause}
                 GROUP BY p.id, p.name, p.category
                 ORDER BY p.id
-                LIMIT $1 OFFSET $2
+                LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}
             `;
             countSql = `
                 SELECT COUNT(*) AS total
                 FROM products p
+                ${whereClause}
             `;
-            params = [limitValue, offsetValue];
         }
 
         const [{ rows }, { rows: countRows }] = await Promise.all([
             query(sql, params),
-            query(countSql, branchValue ? [branchValue] : [])
+            query(countSql, countParams)
         ]);
         const total = parseInt(countRows[0]?.total || '0', 10);
         return res.json({ message: 'success', data: rows, page: pageValue, total, limit: limitValue });
