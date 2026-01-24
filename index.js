@@ -6,16 +6,17 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
+import compression from 'compression';
 import './database.js'; // Database connection initializes on import
 import { initializeSocket } from './socket.js';
 import { startScheduler } from './scheduler.js';
-import { 
-    ordersLimiter, 
-    cartLimiter, 
-    searchLimiter, 
-    returnsLimiter, 
-    chatLimiter, 
-    reviewLimiter 
+import {
+    ordersLimiter,
+    cartLimiter,
+    searchLimiter,
+    returnsLimiter,
+    chatLimiter,
+    reviewLimiter
 } from './middleware/rateLimiters.js';
 import authRoutes from './routes/auth.js';
 import productRoutes from './routes/products.js';
@@ -107,6 +108,20 @@ app.use(helmet({
     contentSecurityPolicy: NODE_ENV === 'production' ? undefined : false
 }));
 
+// 🔥 Response Compression - تقليل حجم البيانات بنسبة 70-85%
+app.use(compression({
+    level: 9, // Maximum compression
+    threshold: 0, // Compress everything (even small responses)
+    filter: (req, res) => {
+        // Don't compress if client doesn't support it
+        if (req.headers['x-no-compression']) {
+            return false;
+        }
+        // Compress all responses by default
+        return compression.filter(req, res);
+    }
+}));
+
 // Rate limiting
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
@@ -128,19 +143,19 @@ const authLimiter = rateLimit({
 // CORS - Handle preflight requests FIRST
 app.use((req, res, next) => {
     const origin = req.headers.origin;
-    
+
     // Allow all origins (Vercel domains and localhost)
     if (origin) {
         res.header('Access-Control-Allow-Origin', origin);
     } else {
         res.header('Access-Control-Allow-Origin', '*');
     }
-    
+
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, apikey, Accept');
     res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Max-Age', '86400');
-    
+
     // Handle preflight
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
@@ -175,7 +190,7 @@ app.use((req, res, next) => {
         '/inventory', '/excel', '/location', '/order-cancellation', '/reviews',
         '/hero-sections', '/upload'
     ];
-    
+
     const path = req.path;
     for (const route of routesToRewrite) {
         if (path.startsWith(route + '/') || path === route) {
@@ -250,7 +265,7 @@ app.get('/api/health', async (req, res) => {
     const { query: dbQuery } = await import('./database.js');
     let dbStatus = 'unknown';
     let dbError = null;
-    
+
     try {
         const result = await dbQuery('SELECT NOW() as time');
         dbStatus = 'connected';
@@ -258,9 +273,9 @@ app.get('/api/health', async (req, res) => {
         dbStatus = 'error';
         dbError = err.message;
     }
-    
-    res.status(200).json({ 
-        status: 'ok', 
+
+    res.status(200).json({
+        status: 'ok',
         timestamp: new Date().toISOString(),
         environment: NODE_ENV,
         database: {
@@ -274,7 +289,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.json({ 
+    res.json({
         message: 'Lumina Fresh Market API',
         version: '1.0.0',
         status: 'running',
@@ -297,7 +312,7 @@ app.use((req, res) => {
 // Global error handler
 app.use((err, req, res, next) => {
     console.error('Global error:', err);
-    res.status(err.status || 500).json({ 
+    res.status(err.status || 500).json({
         error: NODE_ENV === 'production' ? 'Internal server error' : err.message,
         ...(NODE_ENV !== 'production' && { stack: err.stack })
     });
@@ -309,10 +324,10 @@ if (!process.env.VERCEL) {
         console.log(`🚀 Server running on port ${PORT}`);
         console.log(`📡 Environment: ${NODE_ENV}`);
         console.log(`🔌 Socket.io ready`);
-        
+
         // Start the order scheduler
         startScheduler();
-        
+
         if (NODE_ENV === 'production') {
             console.log(`✅ Production mode active`);
         }

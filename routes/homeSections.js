@@ -2,6 +2,11 @@ import express from 'express';
 import { query } from '../database.js';
 
 const router = express.Router();
+const clampNumber = (value, fallback, max) => {
+    const parsed = parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.min(parsed, max);
+};
 
 const normalizeCategoryValue = (value = '') =>
     value
@@ -20,13 +25,26 @@ const normalizeCategoryValue = (value = '') =>
 router.get('/', async (req, res) => {
     try {
         const branchId = req.query.branchId;
+        const all = req.query.all === 'true';
+        const pageValue = clampNumber(req.query.page, 1, 1000);
+        const limitValue = clampNumber(req.query.limit, 3, 10);
+        const offsetValue = (pageValue - 1) * limitValue;
+        const productLimit = clampNumber(req.query.productLimit, 8, 12);
 
         // Check if home_sections table exists and has data
-        const sectionsResult = await query(
-            `SELECT * FROM home_sections 
-             WHERE is_active = true 
-             ORDER BY display_order ASC`,
+        const totalResult = await query(
+            `SELECT COUNT(*) AS total FROM home_sections WHERE is_active = true`,
             []
+        );
+        const total = parseInt(totalResult?.rows?.[0]?.total || '0', 10);
+
+        const sectionsResult = await query(
+            `SELECT id, section_name, section_name_ar, banner_image, category, display_order, max_products
+             FROM home_sections
+             WHERE is_active = true
+             ORDER BY display_order ASC
+             ${all ? '' : 'LIMIT $1 OFFSET $2'}`,
+            all ? [] : [limitValue, offsetValue]
         );
 
         const sections = sectionsResult?.rows || [];
@@ -41,8 +59,8 @@ router.get('/', async (req, res) => {
         const sectionsWithProducts = await Promise.all(
             sections.map(async (section) => {
                 try {
-                    console.log(`🔍 Fetching products for section "${section.section_name_ar}" - Category: ${section.category}, Max: ${section.max_products}`);
-                    
+                    const sectionMax = Math.min(section.max_products || productLimit, productLimit);
+
                     const categoryCandidates = [
                         section.category,
                         section.section_name_ar,
@@ -81,11 +99,21 @@ router.get('/', async (req, res) => {
                             LIMIT 1
                         )
                         SELECT DISTINCT ON (p.id) 
-                            p.id, p.name, p.category, p.image, p.rating, p.reviews,
-                            p.weight,
-                            p.frame_overlay_url, p.frame_enabled,
-                            bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
+                            p.id AS i,
+                            p.name AS n,
+                            p.name_ar AS na,
+                            p.category AS c,
+                            p.image AS im,
+                            p.weight AS w,
+                            p.frame_overlay_url AS fo,
+                            p.frame_enabled AS fe,
+                            bp.price AS p,
+                            bp.discount_price AS dp,
+                            p.brand_id AS bi,
+                            b.name_ar AS bna,
+                            b.name_en AS bne
                         FROM products p
+                        LEFT JOIN brands b ON p.brand_id = b.id
                         LEFT JOIN branch_products bp ON p.id = bp.product_id
                         LEFT JOIN matched_category c ON TRUE
                         WHERE (p.is_offer_only = FALSE OR p.is_offer_only IS NULL)
@@ -109,26 +137,10 @@ router.get('/', async (req, res) => {
                     }
 
                     productsQuery += ` ORDER BY p.id DESC, p.is_new DESC LIMIT $${params.length + 1}`;
-                    params.push(section.max_products || 8);
-
-                    console.log(`🔎 Searching for category candidates:`, categoryCandidates);
-                    console.log(`🔎 Query params:`, params);
-                    console.log(`🔎 SQL Query:`, productsQuery.replace(/\s+/g, ' ').trim());
+                    params.push(sectionMax);
                     
                     const productsResult = await query(productsQuery, params);
                     
-                    console.log(`✅ Found ${productsResult?.rows?.length || 0} products for category "${section.category}"`);
-                    if (productsResult?.rows?.length > 0) {
-                        console.log(`📦 Sample product:`, { 
-                            id: productsResult.rows[0].id, 
-                            name: productsResult.rows[0].name, 
-                            category: productsResult.rows[0].category,
-                            price: productsResult.rows[0].price 
-                        });
-                    } else {
-                        console.warn(`⚠️ No products found for category "${section.category}" - Check if category name matches exactly`);
-                    }
-
                     return {
                         ...section,
                         products: productsResult?.rows || []
@@ -143,9 +155,16 @@ router.get('/', async (req, res) => {
             })
         );
         
-        console.log(`📦 Returning ${sectionsWithProducts.length} sections with products`);
+        const currentCount = sectionsWithProducts.length;
+        const hasMore = all ? false : offsetValue + currentCount < total;
 
-        res.json({ data: sectionsWithProducts });
+        res.json({
+            data: sectionsWithProducts,
+            page: all ? 1 : pageValue,
+            limit: all ? total : limitValue,
+            total,
+            hasMore
+        });
     } catch (error) {
         console.error('Error fetching home sections:', error);
         console.error('Error stack:', error.stack);
