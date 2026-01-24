@@ -215,16 +215,89 @@ router.get('/special-offers', async (req, res) => {
     }
 });
 
+// Admin list view: lightweight products (exclude image/description)
+router.get('/admin/list', [verifyToken, isAdmin], async (req, res) => {
+    const { branchId, page, limit } = req.query;
+    const branchValue = branchId ? parseInt(branchId, 10) : null;
+    const pageRaw = parseInt(page, 10);
+    const limitRaw = parseInt(limit, 10);
+    const pageValue = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const limitValue = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 50;
+    const offsetValue = (pageValue - 1) * limitValue;
+
+    try {
+        let sql;
+        let countSql;
+        let params = [];
+
+        if (branchValue) {
+            sql = `
+                SELECT p.id,
+                       p.name,
+                       p.category AS category_id,
+                       COALESCE(bp.price, 0) AS price,
+                       COALESCE(bp.stock_quantity, 0) AS stock
+                FROM products p
+                JOIN branch_products bp
+                  ON p.id = bp.product_id AND bp.branch_id = $1
+                ORDER BY p.id
+                LIMIT $2 OFFSET $3
+            `;
+            countSql = `
+                SELECT COUNT(*) AS total
+                FROM products p
+                JOIN branch_products bp
+                  ON p.id = bp.product_id AND bp.branch_id = $1
+            `;
+            params = [branchValue, limitValue, offsetValue];
+        } else {
+            sql = `
+                SELECT p.id,
+                       p.name,
+                       p.category AS category_id,
+                       COALESCE(MAX(bp.price), 0) AS price,
+                       COALESCE(SUM(bp.stock_quantity), 0) AS stock
+                FROM products p
+                LEFT JOIN branch_products bp ON p.id = bp.product_id
+                GROUP BY p.id, p.name, p.category
+                ORDER BY p.id
+                LIMIT $1 OFFSET $2
+            `;
+            countSql = `
+                SELECT COUNT(*) AS total
+                FROM products p
+            `;
+            params = [limitValue, offsetValue];
+        }
+
+        const [{ rows }, { rows: countRows }] = await Promise.all([
+            query(sql, params),
+            query(countSql, branchValue ? [branchValue] : [])
+        ]);
+        const total = parseInt(countRows[0]?.total || '0', 10);
+        return res.json({ message: 'success', data: rows, page: pageValue, total, limit: limitValue });
+    } catch (err) {
+        console.error('Error fetching admin product list:', err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // Get all products (filtered by branch)
 router.get('/', async (req, res) => {
-    const { branchId, category, search, limit, offset, includeAllBranches, includeMagazine } = req.query;
-    
-    // 🔥 For admin panel: no limit (get all products)
-    // For users: default 100 products
-    const limitValue = includeAllBranches === 'true' 
-        ? (limit ? parseInt(limit) : 10000) // Admin: get up to 10k products
-        : (limit ? parseInt(limit) : 100);   // Users: default 100
-    const offsetValue = offset ? parseInt(offset) : 0;
+    const { branchId, category, search, limit, offset, includeAllBranches, includeMagazine, page } = req.query;
+
+    const limitRaw = parseInt(limit, 10);
+    const offsetRaw = parseInt(offset, 10);
+    const pageRaw = parseInt(page, 10);
+
+    const defaultLimit = includeAllBranches === 'true' ? 10000 : 20;
+    const limitValue = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : defaultLimit;
+    const offsetValue = Number.isFinite(offsetRaw) && offsetRaw >= 0
+        ? offsetRaw
+        : (Number.isFinite(pageRaw) && pageRaw > 0 ? (pageRaw - 1) * limitValue : 0);
+    const pageValue = Number.isFinite(pageRaw) && pageRaw > 0
+        ? pageRaw
+        : Math.floor(offsetValue / limitValue) + 1;
     
     console.log(`📦 Products API - Branch: ${branchId}, Category: ${category || 'All'}, Limit: ${limitValue}, Offset: ${offsetValue}, Admin: ${includeAllBranches === 'true'}`);
 
@@ -319,7 +392,9 @@ router.get('/', async (req, res) => {
         // Enforce branch selection as per requirements
         return res.json({
             "message": "success",
-            "data": []
+            "data": [],
+            "page": pageValue,
+            "total": 0
         });
     }
 
@@ -490,11 +565,13 @@ router.get('/', async (req, res) => {
         res.json({
             "message": "success",
             "data": cleanedRows,
+            "page": pageValue,
+            "total": totalCount,
             "pagination": {
                 "total": totalCount,
                 "limit": limitValue,
                 "offset": offsetValue,
-                "page": Math.floor(offsetValue / limitValue) + 1,
+                "page": pageValue,
                 "totalPages": Math.ceil(totalCount / limitValue)
             }
         });
