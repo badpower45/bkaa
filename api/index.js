@@ -15,20 +15,20 @@ const app = express();
 // Database connection (normalize sslmode to avoid self-signed chain issues)
 const normalizeConnectionString = (raw) => {
     if (!raw) return raw;
-    
+
     let normalized = raw;
-    
+
     // Add sslmode if not present
     if (!normalized.includes('sslmode=')) {
         const separator = normalized.includes('?') ? '&' : '?';
         normalized = `${normalized}${separator}sslmode=no-verify`;
     }
-    
+
     // Add prepared_statements=false for pgbouncer compatibility
     if (normalized.includes(':6543') && !normalized.includes('prepared_statements=')) {
         normalized = `${normalized}&prepared_statements=false`;
     }
-    
+
     return normalized;
 };
 
@@ -92,22 +92,22 @@ const query = async (text, params, retries = 3) => {
         } catch (err) {
             // Connection errors that should be retried
             const shouldRetry = (
-                (err.code === 'ECONNRESET' || 
-                 err.code === 'ETIMEDOUT' || 
-                 err.code === 'XX000' || // Circuit breaker
-                 err.code === '57P01' || // Connection terminated
-                 err.message?.includes('Connection terminated') ||
-                 err.message?.includes('Circuit breaker') ||
-                 err.message?.includes('connection timeout') ||
-                 err.message?.includes('upstream database')) &&
+                (err.code === 'ECONNRESET' ||
+                    err.code === 'ETIMEDOUT' ||
+                    err.code === 'XX000' || // Circuit breaker
+                    err.code === '57P01' || // Connection terminated
+                    err.message?.includes('Connection terminated') ||
+                    err.message?.includes('Circuit breaker') ||
+                    err.message?.includes('connection timeout') ||
+                    err.message?.includes('upstream database')) &&
                 attempt < retries
             );
-            
+
             if (shouldRetry) {
                 console.log(`🔄 Retry ${attempt + 1}/${retries} for query after: ${err.message}`);
                 // Exponential backoff
                 await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
-                
+
                 // Try to reset pool connection
                 try {
                     await pool.query('SELECT 1');
@@ -124,14 +124,14 @@ const query = async (text, params, retries = 3) => {
 // Auth middleware - Enhanced with better error handling
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    
+
     if (!authHeader) {
         console.log('❌ No authorization header');
         return res.status(403).json({ auth: false, message: 'No token provided.' });
     }
-    
+
     const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
-    
+
     if (!token || token === 'null' || token === 'undefined') {
         console.log('❌ Invalid token value:', token);
         return res.status(403).json({ auth: false, message: 'No token provided.' });
@@ -187,7 +187,7 @@ app.post('/api/auth/register', async (req, res) => {
 // Login - Enhanced with better token generation
 app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
-    
+
     console.log('🔐 Login attempt for:', email);
 
     // Validation
@@ -201,7 +201,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     try {
         const { rows } = await query('SELECT * FROM users WHERE email = $1', [email.toLowerCase().trim()]);
-        
+
         if (!rows[0]) {
             console.log('❌ User not found:', email);
             return res.status(401).json({ auth: false, error: 'Invalid email or password' });
@@ -223,28 +223,28 @@ app.post('/api/auth/login', async (req, res) => {
         }
 
         // Generate token with proper payload
-        const tokenPayload = { 
-            id: user.id, 
+        const tokenPayload = {
+            id: user.id,
             role: user.role || 'customer',
             email: user.email,
             iat: Math.floor(Date.now() / 1000)
         };
-        
-        const token = jwt.sign(tokenPayload, JWT_SECRET, { 
+
+        const token = jwt.sign(tokenPayload, JWT_SECRET, {
             expiresIn: '30d',
             algorithm: 'HS256'
         });
-        
+
         console.log('✅ Login successful for:', email, 'role:', user.role);
         console.log('✅ Token generated:', token.substring(0, 20) + '...');
 
         res.json({
             auth: true,
             token: token,
-            user: { 
-                id: user.id, 
-                name: user.name, 
-                email: user.email, 
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
                 role: user.role || 'customer',
                 phone: user.phone,
                 email_verified: user.email_verified
@@ -294,7 +294,7 @@ app.get('/api/products', async (req, res) => {
     try {
         let sql = '';
         const params = [];
-        
+
         if (branchId) {
             // Get products for specific branch with JOIN to products table
             sql = `
@@ -317,7 +317,7 @@ app.get('/api/products', async (req, res) => {
                 WHERE bp.branch_id = $1
             `;
             params.push(parseInt(branchId));
-            
+
             if (category) {
                 sql += ` AND p.category = $${params.length + 1}`;
                 params.push(category);
@@ -326,7 +326,7 @@ app.get('/api/products', async (req, res) => {
                 sql += ` AND p.name ILIKE $${params.length + 1}`;
                 params.push(`%${search}%`);
             }
-            
+
             sql += ' ORDER BY p.name ASC';
         } else {
             // Get all products (first branch for each product)
@@ -348,7 +348,7 @@ app.get('/api/products', async (req, res) => {
                 FROM products p
                 LEFT JOIN branch_products bp ON p.id = bp.product_id
             `;
-            
+
             const whereClauses = [];
             if (category) {
                 whereClauses.push(`p.category = $${params.length + 1}`);
@@ -358,14 +358,14 @@ app.get('/api/products', async (req, res) => {
                 whereClauses.push(`p.name ILIKE $${params.length + 1}`);
                 params.push(`%${search}%`);
             }
-            
+
             if (whereClauses.length > 0) {
                 sql += ' WHERE ' + whereClauses.join(' AND ');
             }
-            
+
             sql += ' ORDER BY p.id, p.name ASC';
         }
-        
+
         if (limit) {
             sql += ` LIMIT ${parseInt(limit)}`;
         }
@@ -394,23 +394,59 @@ app.get('/api/products/frames', async (req, res) => {
     }
 });
 
-// Upload new frame - Using BASE64
+// Upload new frame - Upload to Cloudinary (NO MORE BASE64!)
 app.post('/api/products/upload-frame', verifyToken, async (req, res) => {
     try {
-        console.log('🖼️ Upload frame request (base64)');
-
         const { name, name_ar, category, frame_base64 } = req.body;
+
+        console.log('🖼️ Upload frame to Cloudinary:', { name, name_ar, category, hasBase64: !!frame_base64 });
 
         if (!name || !name_ar) {
             return res.status(400).json({ error: 'Name and name_ar are required' });
         }
 
         if (!frame_base64) {
-            return res.status(400).json({ error: 'frame_base64 is required' });
+            return res.status(400).json({ error: 'Frame image is required' });
         }
 
-        const frameUrl = frame_base64;
+        // 🔥 Upload base64 to Cloudinary instead of storing in DB
+        let frameUrl;
 
+        if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY) {
+            const cloudinary = require('cloudinary').v2;
+            cloudinary.config({
+                cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+                api_key: process.env.CLOUDINARY_API_KEY,
+                api_secret: process.env.CLOUDINARY_API_SECRET
+            });
+
+            try {
+                // Upload base64 directly to Cloudinary
+                const result = await cloudinary.uploader.upload(frame_base64, {
+                    folder: 'product-frames',
+                    public_id: `frame_${Date.now()}`,
+                    resource_type: 'image',
+                    quality: 'auto:eco',
+                    fetch_format: 'auto'
+                });
+
+                frameUrl = result.secure_url;
+                console.log('✅ Uploaded to Cloudinary:', frameUrl);
+            } catch (cloudinaryError) {
+                console.error('❌ Cloudinary error:', cloudinaryError);
+                return res.status(500).json({
+                    error: 'Failed to upload to Cloudinary',
+                    details: cloudinaryError.message
+                });
+            }
+        } else {
+            console.error('❌ Cloudinary not configured!');
+            return res.status(500).json({
+                error: 'Cloudinary not configured. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET.'
+            });
+        }
+
+        // Store Cloudinary URL in database (not base64!)
         const { rows } = await query(
             `INSERT INTO product_frames (name, name_ar, frame_url, category, is_active)
              VALUES ($1, $2, $3, $4, TRUE)
@@ -419,7 +455,7 @@ app.post('/api/products/upload-frame', verifyToken, async (req, res) => {
         );
 
         console.log('✅ Frame uploaded successfully:', rows[0].id);
-        res.json({ success: true, data: rows[0], message: 'Frame uploaded successfully' });
+        res.json({ success: true, data: rows[0], message: 'Frame uploaded to Cloudinary successfully!' });
     } catch (err) {
         console.error('❌ Error uploading frame:', err);
         res.status(500).json({ error: 'Failed to upload frame', details: err.message });
@@ -512,7 +548,7 @@ app.get('/api/products/:id', async (req, res) => {
     try {
         const { branchId } = req.query;
         const productId = req.params.id;
-        
+
         let sql = `
             SELECT 
                 bp.product_id as id,
@@ -535,9 +571,9 @@ app.get('/api/products/:id', async (req, res) => {
             INNER JOIN products p ON bp.product_id = p.id
             WHERE bp.product_id = $1
         `;
-        
+
         const params = [productId];
-        
+
         // If branchId specified, get product from that branch
         if (branchId) {
             sql += ` AND bp.branch_id = $2`;
@@ -546,15 +582,15 @@ app.get('/api/products/:id', async (req, res) => {
             // Otherwise, get from first available branch
             sql += ` ORDER BY bp.branch_id ASC`;
         }
-        
+
         sql += ` LIMIT 1`;
-        
+
         const { rows } = await query(sql, params);
-        
+
         if (!rows[0]) {
             return res.status(404).json({ error: 'Product not found' });
         }
-        
+
         res.json(rows[0]);
     } catch (err) {
         console.error('Get product error:', err);
@@ -567,11 +603,11 @@ app.get('/api/products/:id', async (req, res) => {
 // Get all orders with userId query param
 app.get('/api/orders', verifyToken, async (req, res) => {
     const { userId } = req.query;
-    
+
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
     }
-    
+
     try {
         const { rows } = await query(
             `SELECT o.*, 
@@ -766,7 +802,7 @@ app.get('/api/admin/delivery-drivers', verifyToken, async (req, res) => {
             WHERE u.role = 'delivery'
             ORDER BY u.name ASC
         `);
-        
+
         res.json({ success: true, data: rows });
     } catch (err) {
         console.error('Error fetching delivery drivers:', err);
@@ -814,8 +850,8 @@ app.get('/api/admin/delivery-map', verifyToken, async (req, res) => {
             ORDER BY o.created_at DESC
         `);
 
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             data: {
                 branches,
                 deliveries
@@ -852,7 +888,7 @@ app.get('/api/categories/admin/all', async (req, res) => {
             GROUP BY c.id
             ORDER BY c.display_order ASC, c.name ASC
         `);
-        
+
         res.json({ success: true, data: rows });
     } catch (err) {
         console.error('Error fetching admin categories:', err);
@@ -919,7 +955,7 @@ app.delete('/api/favorites/:productId', verifyToken, async (req, res) => {
 app.get('/api/cart', verifyToken, async (req, res) => {
     const userId = req.userId;
     const branchId = req.query.branchId || 1;
-    
+
     try {
         const { rows } = await query(
             `SELECT c.id as cart_id, c.quantity, c.substitution_preference,
@@ -934,7 +970,7 @@ app.get('/api/cart', verifyToken, async (req, res) => {
              WHERE c.user_id = $1`,
             [userId, branchId]
         );
-        
+
         const items = rows.map(row => ({
             id: row.id,
             cartId: row.cart_id,
@@ -951,7 +987,7 @@ app.get('/api/cart', verifyToken, async (req, res) => {
             stockQuantity: row.stock_quantity,
             isAvailable: row.is_available
         }));
-        
+
         res.json({ message: 'success', data: items });
     } catch (err) {
         console.error('Cart fetch error:', err);
@@ -983,11 +1019,11 @@ app.get('/api/cart/:userId', verifyToken, async (req, res) => {
 // Add to cart (supports both logged in and guest users)
 app.post('/api/cart/add', async (req, res) => {
     const { productId, quantity, substitutionPreference, userId } = req.body;
-    
+
     // Get userId from token if available, otherwise use provided userId (for guests)
     const token = req.headers['authorization']?.split(' ')[1];
     let effectiveUserId = userId;
-    
+
     if (token) {
         try {
             const decoded = jwt.verify(token, JWT_SECRET);
@@ -996,11 +1032,11 @@ app.post('/api/cart/add', async (req, res) => {
             // Token invalid, use provided userId
         }
     }
-    
+
     if (!effectiveUserId) {
         return res.status(400).json({ error: 'User ID is required' });
     }
-    
+
     try {
         await query(
             `INSERT INTO cart (user_id, product_id, quantity, substitution_preference) 
@@ -1080,7 +1116,7 @@ app.get('/api/admin/users', verifyToken, async (req, res) => {
     if (req.userRole !== 'admin' && req.userRole !== 'manager') {
         return res.status(403).json({ error: 'Admin only' });
     }
-    
+
     try {
         const { rows } = await query(
             `SELECT 
@@ -1090,13 +1126,13 @@ app.get('/api/admin/users', verifyToken, async (req, res) => {
              FROM users 
              ORDER BY created_at DESC`
         );
-        
+
         console.log(`📋 Loaded ${rows.length} users for admin`);
-        
+
         // Return in format expected by frontend
-        res.json({ 
+        res.json({
             success: true,
-            data: rows 
+            data: rows
         });
     } catch (err) {
         console.error('❌ Error fetching users:', err);
@@ -1134,20 +1170,20 @@ app.get('/api/admin/orders', verifyToken, async (req, res) => {
              LEFT JOIN delivery_staff d ON o.delivery_driver_id = d.id
              ORDER BY o.created_at DESC`
         );
-        
+
         console.log(`✅ Loaded ${rows.length} orders for admin`);
-        
-        res.json({ 
+
+        res.json({
             success: true,
             orders: rows,
-            total: rows.length 
+            total: rows.length
         });
     } catch (err) {
         console.error('❌ Error fetching admin orders:', err);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
-            error: 'Failed to fetch orders', 
-            details: err.message 
+            error: 'Failed to fetch orders',
+            details: err.message
         });
     }
 });
@@ -1217,7 +1253,7 @@ app.get('/api/admin/stats', verifyToken, async (req, res) => {
         const productsCount = await query('SELECT COUNT(*) FROM products');
         const revenue = await query('SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE status != $1', ['cancelled']);
         const recentOrders = await query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 5');
-        
+
         res.json({
             users: parseInt(usersCount.rows[0].count),
             orders: parseInt(ordersCount.rows[0].count),
@@ -1236,10 +1272,10 @@ app.get('/api/admin/stats', verifyToken, async (req, res) => {
 // Get customer analytics with filtering and sorting
 app.get('/api/admin/customer-analytics', verifyToken, async (req, res) => {
     if (req.userRole !== 'admin') return res.status(403).json({ error: 'Admin only' });
-    
+
     try {
         const { search, rating, sortBy, limit = 200 } = req.query;
-        
+
         let sql = `
             SELECT 
                 u.id,
@@ -1263,17 +1299,17 @@ app.get('/api/admin/customer-analytics', verifyToken, async (req, res) => {
             LEFT JOIN orders o ON o.user_id = u.id
             WHERE u.role = 'user'
         `;
-        
+
         const params = [];
-        
+
         // Search filter
         if (search) {
             params.push(`%${search}%`);
             sql += ` AND (u.name ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.phone ILIKE $${params.length})`;
         }
-        
+
         sql += ' GROUP BY u.id, u.name, u.email, u.phone, u.is_blocked';
-        
+
         // Rating filter (applied after GROUP BY using HAVING)
         if (rating && rating !== 'all') {
             if (rating === 'excellent') {
@@ -1286,7 +1322,7 @@ app.get('/api/admin/customer-analytics', verifyToken, async (req, res) => {
                 sql += ' HAVING u.is_blocked = true';
             }
         }
-        
+
         // Sorting
         if (sortBy === 'rejected') {
             sql += ' ORDER BY rejected_orders DESC, total_orders DESC';
@@ -1299,12 +1335,12 @@ app.get('/api/admin/customer-analytics', verifyToken, async (req, res) => {
         } else {
             sql += ' ORDER BY total_orders DESC';
         }
-        
+
         params.push(parseInt(limit));
         sql += ` LIMIT $${params.length}`;
-        
+
         const { rows } = await query(sql, params);
-        
+
         // Format the response
         const formattedRows = rows.map(row => ({
             ...row,
@@ -1314,7 +1350,7 @@ app.get('/api/admin/customer-analytics', verifyToken, async (req, res) => {
             rejected_orders: parseInt(row.rejected_orders || 0),
             completed_orders: parseInt(row.completed_orders || 0)
         }));
-        
+
         res.json({ data: formattedRows });
     } catch (err) {
         console.error('Customer analytics error:', err);
@@ -1325,7 +1361,7 @@ app.get('/api/admin/customer-analytics', verifyToken, async (req, res) => {
 // Get customer analytics stats summary
 app.get('/api/admin/customer-analytics/stats', verifyToken, async (req, res) => {
     if (req.userRole !== 'admin') return res.status(403).json({ error: 'Admin only' });
-    
+
     try {
         const statsQuery = `
             SELECT 
@@ -1344,10 +1380,10 @@ app.get('/api/admin/customer-analytics/stats', verifyToken, async (req, res) => 
             FROM users u
             WHERE u.role = 'user'
         `;
-        
+
         const { rows } = await query(statsQuery);
         const stats = rows[0];
-        
+
         res.json({
             data: {
                 total_customers: parseInt(stats.total_customers || 0),
@@ -1367,7 +1403,7 @@ app.get('/api/admin/customer-analytics/stats', verifyToken, async (req, res) => 
 
 app.get('/api/search', async (req, res) => {
     const { q, category, brand, minPrice, maxPrice } = req.query;
-    
+
     try {
         let sql = 'SELECT * FROM products WHERE 1=1';
         const params = [];
@@ -1456,10 +1492,10 @@ app.post('/api/stories/:id/view', async (req, res) => {
                 [storyId, viewerIp]
             );
         }
-        
+
         // Increment views count
         await query('UPDATE stories SET views_count = views_count + 1 WHERE id = $1', [storyId]);
-        
+
         res.json({ success: true });
     } catch (err) {
         console.error('Story view error:', err);
@@ -1474,7 +1510,7 @@ app.post('/api/stories', verifyToken, async (req, res) => {
     }
 
     const { title, media_url, media_type, duration, link_url, link_text, expires_in_hours, priority, branch_id } = req.body;
-    
+
     // Calculate expiry date (default 24 hours)
     const expiresAt = new Date(Date.now() + (expires_in_hours || 24) * 60 * 60 * 1000);
 
@@ -1633,14 +1669,14 @@ app.post('/api/delivery-fees/calculate', async (req, res) => {
 
         // Calculate distance-based fees if coordinates provided
         let totalFee = fee.base_fee;
-        
+
         if (customerLat && customerLng && fee.per_km_fee > 0) {
             // جلب موقع الفرع
             const { rows: branchRows } = await query(
                 'SELECT latitude, longitude FROM branches WHERE id = $1',
                 [branchId]
             );
-            
+
             if (branchRows[0] && branchRows[0].latitude && branchRows[0].longitude) {
                 const distance = calculateDistance(
                     branchRows[0].latitude,
@@ -1648,7 +1684,7 @@ app.post('/api/delivery-fees/calculate', async (req, res) => {
                     customerLat,
                     customerLng
                 );
-                
+
                 totalFee += distance * fee.per_km_fee;
             }
         }
@@ -1742,7 +1778,7 @@ app.post('/api/facebook-reels', verifyToken, async (req, res) => {
     }
 
     const { title, thumbnail_url, video_url, facebook_url, views_count, duration, display_order, is_active } = req.body;
-    
+
     try {
         const { rows } = await query(
             `INSERT INTO facebook_reels 
@@ -1765,7 +1801,7 @@ app.put('/api/facebook-reels/:id', verifyToken, async (req, res) => {
     }
 
     const { title, thumbnail_url, video_url, facebook_url, views_count, duration, display_order, is_active } = req.body;
-    
+
     try {
         const { rows } = await query(
             `UPDATE facebook_reels SET 
@@ -1873,7 +1909,7 @@ app.post('/api/reset-admin-password', async (req, res) => {
     try {
         const password = 'admin123456';
         const hashedPassword = bcrypt.hashSync(password, 8);
-        
+
         const { rows } = await query(
             `UPDATE users 
              SET password = $1 
@@ -1881,11 +1917,11 @@ app.post('/api/reset-admin-password', async (req, res) => {
              RETURNING id, email, name, role`,
             [hashedPassword]
         );
-        
+
         if (rows[0]) {
             console.log('✅ Admin password reset successfully');
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 message: 'Admin password reset to: admin123456',
                 user: rows[0],
                 hash: hashedPassword

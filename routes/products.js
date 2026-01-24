@@ -129,7 +129,7 @@ router.post('/dev/fix-prices', [verifyToken, isAdmin], async (req, res) => {
             WHERE bp.product_id IS NULL
         `;
         const { rows: missingProducts } = await query(missingQuery);
-        
+
         // Find products with zero prices
         const zeroPriceQuery = `
             SELECT p.id, p.name, p.barcode, bp.branch_id
@@ -138,12 +138,12 @@ router.post('/dev/fix-prices', [verifyToken, isAdmin], async (req, res) => {
             WHERE bp.price = 0 OR bp.price IS NULL
         `;
         const { rows: zeroProducts } = await query(zeroPriceQuery);
-        
+
         console.log(`\ud83d\udd27 Found ${missingProducts.length} products without branch entries`);
         console.log(`\ud83d\udd27 Found ${zeroProducts.length} products with zero/null prices`);
-        
+
         await query('BEGIN');
-        
+
         // Add missing products to branch 1 with default price of 10
         for (const product of missingProducts) {
             await query(`
@@ -152,7 +152,7 @@ router.post('/dev/fix-prices', [verifyToken, isAdmin], async (req, res) => {
                 ON CONFLICT (branch_id, product_id) DO NOTHING
             `, [product.id]);
         }
-        
+
         // Update zero prices to 10
         for (const product of zeroProducts) {
             await query(`
@@ -161,10 +161,10 @@ router.post('/dev/fix-prices', [verifyToken, isAdmin], async (req, res) => {
                 WHERE product_id = $1 AND branch_id = $2
             `, [product.id, product.branch_id]);
         }
-        
+
         await query('COMMIT');
-        
-        return res.json({ 
+
+        return res.json({
             message: 'Prices fixed successfully',
             fixed: {
                 addedToBranch: missingProducts.length,
@@ -186,11 +186,11 @@ router.post('/dev/fix-prices', [verifyToken, isAdmin], async (req, res) => {
 router.get('/special-offers', async (req, res) => {
     const { branchId } = req.query;
     const branch = branchId || 1; // Default branch
-    
+
     try {
         // Add cache headers - 6 hours for special offers
         res.set('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=300, max-age=600');
-        
+
         const { rows } = await query(`
             SELECT DISTINCT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews,
                    p.is_organic, p.is_new,
@@ -206,7 +206,7 @@ router.get('/special-offers', async (req, res) => {
             ORDER BY (bp.price - bp.discount_price) DESC
             LIMIT 100
         `, [branch]);
-        
+
         console.log(`✨ Special offers loaded: ${rows.length} products with discount`);
         return res.json({ data: rows });
     } catch (err) {
@@ -335,7 +335,7 @@ router.get('/', async (req, res) => {
     const pageValue = Number.isFinite(pageRaw) && pageRaw > 0
         ? pageRaw
         : Math.floor(offsetValue / limitValue) + 1;
-    
+
     console.log(`📦 Products API - Branch: ${branchId}, Category: ${category || 'All'}, Limit: ${limitValue}, Offset: ${offsetValue}, Admin: ${includeAllBranches === 'true'}`);
 
     // For admin panel - show all products with their branch data
@@ -401,14 +401,14 @@ router.get('/', async (req, res) => {
                 params.push(`%${search}%`);
                 paramIndex++;
             }
-            
+
             sql += ` ORDER BY p.id, bp.branch_id NULLS LAST`;
-            
+
             // 🔥 إضافة LIMIT و OFFSET
             sql += ` LIMIT $${paramIndex}`;
             params.push(limitValue);
             paramIndex++;
-            
+
             if (offsetValue > 0) {
                 sql += ` OFFSET $${paramIndex}`;
                 params.push(offsetValue);
@@ -425,20 +425,16 @@ router.get('/', async (req, res) => {
         }
     }
 
-    if (!branchId) {
-        // Enforce branch selection as per requirements
-        return res.json({
-            "message": "success",
-            "data": [],
-            "page": pageValue,
-            "total": 0
-        });
+    // 🔥 FIX: استخدام default branch بدلاً من رجوع array فاضي
+    if (!branchId || branchId === '0' || branchId === 0) {
+        console.log('⚠️ No branch ID provided, using default branch 1');
+        branchId = 1; // Default to branch 1
     }
 
     try {
         // Add cache headers - 6 hours cache for aggressive optimization
         res.set('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=300, max-age=600');
-        
+
         const params = [branchId];
         let paramIndex = 2;
         let categoryParamIndex;
@@ -511,7 +507,7 @@ router.get('/', async (req, res) => {
             params.push(`%${search}%`);
             paramIndex++;
         }
-        
+
         // إخفاء منتجات المجلة من القوائم العادية إلا إذا طلب صراحة
         if (includeMagazine !== 'true') {
             sql += ` AND mo.id IS NULL`;
@@ -519,19 +515,19 @@ router.get('/', async (req, res) => {
 
         // Add ORDER BY for consistent results
         sql += ` ORDER BY p.id`;
-        
+
         // 🔥 إضافة LIMIT و OFFSET للـ Pagination
         sql += ` LIMIT $${paramIndex}`;
         params.push(limitValue);
         paramIndex++;
-        
+
         if (offsetValue > 0) {
             sql += ` OFFSET $${paramIndex}`;
             params.push(offsetValue);
         }
 
         const { rows } = await query(sql, params);
-        
+
         // 🔥 Get total count for pagination (without LIMIT/OFFSET)
         let countSql = `
             ${categoryCte}
@@ -545,10 +541,10 @@ router.get('/', async (req, res) => {
                 AND (mo.end_date IS NULL OR mo.end_date >= NOW())
             WHERE bp.branch_id = $1 AND bp.is_available = TRUE
         `;
-        
+
         const countParams = [branchId];
         let countParamIndex = 2;
-        
+
         if (category && category !== 'All') {
             countParams.push(category);
             countSql += ` AND (
@@ -566,20 +562,20 @@ router.get('/', async (req, res) => {
             )`;
             countParamIndex++;
         }
-        
+
         if (search) {
             countSql += ` AND (p.name ILIKE $${countParamIndex} OR p.description ILIKE $${countParamIndex})`;
             countParams.push(`%${search}%`);
             countParamIndex++;
         }
-        
+
         if (includeMagazine !== 'true') {
             countSql += ` AND mo.id IS NULL`;
         }
-        
+
         const countResult = await query(countSql, countParams);
         const totalCount = parseInt(countResult.rows[0]?.total || 0);
-        
+
         // 🔥 Remove NULL/empty values to save bandwidth (Amazon strategy)
         const cleanedRows = rows.map(row => {
             const cleaned = {};
@@ -595,7 +591,7 @@ router.get('/', async (req, res) => {
             });
             return cleaned;
         });
-        
+
         console.log(`✅ Returned ${rows.length} products (Limit: ${limitValue}, Offset: ${offsetValue}, Total: ${totalCount})`);
         console.log(`📦 Avg size: ${JSON.stringify(cleanedRows[0] || {}).length} bytes/product`);
 
@@ -635,24 +631,61 @@ router.get('/frames', async (req, res) => {
     }
 });
 
-// Upload new frame - Using BASE64 (serverless compatible)
+// Upload new frame - Upload to Cloudinary (NO MORE BASE64!)
 router.post('/upload-frame', verifyToken, isAdmin, async (req, res) => {
     try {
-        console.log('🖼️ Upload frame request (base64)');
-
         const { name, name_ar, category, frame_base64 } = req.body;
-        
+
+        console.log('🖼️ Upload frame to Cloudinary:', { name, name_ar, category, hasBase64: !!frame_base64 });
+
         if (!name || !name_ar) {
-            return res.status(400).json({ error: 'Name and name_ar are required' });
+            return res.status(400).json({
+                error: 'Name and name_ar are required'
+            });
         }
 
         if (!frame_base64) {
-            return res.status(400).json({ error: 'frame_base64 is required' });
+            return res.status(400).json({ error: 'Frame image is required' });
         }
 
-        // Store base64 directly in database (no file system needed!)
-        const frameUrl = frame_base64; // Base64 data URL
-        
+        // 🔥 Upload base64 to Cloudinary instead of storing in DB
+        let frameUrl;
+
+        if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY) {
+            const cloudinary = require('cloudinary').v2;
+            cloudinary.config({
+                cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+                api_key: process.env.CLOUDINARY_API_KEY,
+                api_secret: process.env.CLOUDINARY_API_SECRET
+            });
+
+            try {
+                // Upload base64 directly to Cloudinary
+                const result = await cloudinary.uploader.upload(frame_base64, {
+                    folder: 'product-frames',
+                    public_id: `frame_${Date.now()}`,
+                    resource_type: 'image',
+                    quality: 'auto:eco',
+                    fetch_format: 'auto'
+                });
+
+                frameUrl = result.secure_url;
+                console.log('✅ Uploaded to Cloudinary:', frameUrl);
+            } catch (cloudinaryError) {
+                console.error('❌ Cloudinary error:', cloudinaryError);
+                return res.status(500).json({
+                    error: 'Failed to upload to Cloudinary',
+                    details: cloudinaryError.message
+                });
+            }
+        } else {
+            console.error('❌ Cloudinary not configured!');
+            return res.status(500).json({
+                error: 'Cloudinary not configured. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in environment variables.'
+            });
+        }
+
+        // Store Cloudinary URL in database (not base64!)
         const { rows } = await query(
             `INSERT INTO product_frames (name, name_ar, frame_url, category, is_active)
              VALUES ($1, $2, $3, $4, TRUE)
@@ -661,7 +694,7 @@ router.post('/upload-frame', verifyToken, isAdmin, async (req, res) => {
         );
 
         console.log('✅ Frame uploaded successfully:', rows[0].id);
-        res.json({ success: true, data: rows[0], message: 'Frame uploaded successfully' });
+        res.json({ success: true, data: rows[0], message: 'Frame uploaded to Cloudinary successfully!' });
     } catch (error) {
         console.error('❌ Error uploading frame:', error);
         res.status(500).json({ error: 'Failed to upload frame', details: error.message });
@@ -672,16 +705,16 @@ router.post('/upload-frame', verifyToken, isAdmin, async (req, res) => {
 router.delete('/frames/:id', verifyToken, isAdmin, async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // Check if frame is used by any products
         const { rows: usedBy } = await query(
             'SELECT COUNT(*) as count FROM products WHERE frame_overlay_url = (SELECT frame_url FROM product_frames WHERE id = $1)',
             [id]
         );
-        
+
         if (usedBy[0]?.count > 0) {
-            return res.status(400).json({ 
-                error: `Cannot delete frame. It is used by ${usedBy[0].count} product(s)` 
+            return res.status(400).json({
+                error: `Cannot delete frame. It is used by ${usedBy[0].count} product(s)`
             });
         }
 
@@ -698,7 +731,7 @@ router.patch('/:id/frame', verifyToken, isAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const { frame_overlay_url, frame_enabled } = req.body;
-        
+
         const { rows } = await query(
             `UPDATE products 
              SET frame_overlay_url = $1, frame_enabled = $2
@@ -722,7 +755,7 @@ router.patch('/:id/frame', verifyToken, isAdmin, async (req, res) => {
 router.post('/apply-frame-to-all', verifyToken, isAdmin, async (req, res) => {
     try {
         const { frame_overlay_url, frame_enabled } = req.body;
-        
+
         if (!frame_overlay_url) {
             return res.status(400).json({ error: 'frame_overlay_url is required' });
         }
@@ -739,10 +772,10 @@ router.post('/apply-frame-to-all', verifyToken, isAdmin, async (req, res) => {
 
         console.log(`✅ Updated ${rows.length} products with frame`);
 
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             message: `Applied frame to ${rows.length} products`,
-            updatedCount: rows.length 
+            updatedCount: rows.length
         });
     } catch (error) {
         console.error('Error applying frame to all products:', error);
@@ -867,10 +900,10 @@ router.get('/barcode/:barcode', async (req, res) => {
             LEFT JOIN branch_products bp ON p.id = bp.product_id AND bp.branch_id = $2
             WHERE p.barcode = $1
         `;
-        
+
         const { rows } = await query(sql, [barcode, targetBranchId]);
         let row = rows[0];
-        
+
         if (!row) {
             console.log(`❌ Product not found with barcode: ${barcode}`);
             return res.json({
@@ -883,7 +916,7 @@ router.get('/barcode/:barcode', async (req, res) => {
         // Try to get price from ANY branch as fallback
         if (!row.price || row.price === 0 || row.price === null) {
             console.log(`⚠️ Product ${row.id} found but no price for branch ${targetBranchId}, trying other branches...`);
-            
+
             const fallbackSql = `
                 SELECT bp.price, bp.discount_price, bp.stock_quantity, bp.is_available, bp.branch_id
                 FROM branch_products bp
@@ -891,9 +924,9 @@ router.get('/barcode/:barcode', async (req, res) => {
                 ORDER BY bp.branch_id
                 LIMIT 1
             `;
-            
+
             const { rows: fallbackRows } = await query(fallbackSql, [row.id]);
-            
+
             if (fallbackRows.length > 0) {
                 const fallbackData = fallbackRows[0];
                 row.price = fallbackData.price;
@@ -901,7 +934,7 @@ router.get('/barcode/:barcode', async (req, res) => {
                 row.stock_quantity = fallbackData.stock_quantity;
                 row.is_available = fallbackData.is_available;
                 row.branch_id = fallbackData.branch_id;
-                
+
                 console.log(`✅ Found price from branch ${fallbackData.branch_id}: ${fallbackData.price}`);
             } else {
                 console.log(`❌ No price found in any branch for product ${row.id}`);
@@ -911,12 +944,12 @@ router.get('/barcode/:barcode', async (req, res) => {
                 row.is_available = false;
             }
         }
-        
+
         // Ensure numeric values
         row.price = Number(row.price) || 0;
         row.discount_price = row.discount_price ? Number(row.discount_price) : null;
         row.stock_quantity = Number(row.stock_quantity) || 0;
-        
+
         console.log(`📦 Product returned for barcode ${barcode}:`, {
             id: row.id,
             name: row.name,
@@ -939,27 +972,27 @@ router.get('/barcode/:barcode', async (req, res) => {
 // Create Product (Admin only)
 // Creates product and optionally adds to branch inventory with price/stock
 router.post('/', [verifyToken, isAdmin], async (req, res) => {
-    const { 
+    const {
         name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
         price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation,
         frame_overlay_url, frame_enabled
     } = req.body;
-    
+
     // Validation
     if (!name || name.trim() === '') {
-        return res.status(400).json({ 
+        return res.status(400).json({
             error: 'اسم المنتج مطلوب',
             message: 'يجب إدخال اسم المنتج'
         });
     }
-    
+
     if (!price || Number(price) <= 0) {
-        return res.status(400).json({ 
+        return res.status(400).json({
             error: 'السعر مطلوب ويجب أن يكون أكبر من صفر',
             message: 'يرجى إدخال سعر صحيح للمنتج (يجب أن يكون أكبر من 0)'
         });
     }
-    
+
     // ID generation: keep using timestamp or UUID. Schema says TEXT.
     const id = Date.now().toString();
 
@@ -995,7 +1028,7 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
         // Add to branch inventory - always add to at least branch 1
         const targetBranchId = branchId || 1; // Default to branch 1
         const targetPrice = price || 0; // Default price
-        
+
         const bpSql = `
             INSERT INTO branch_products (branch_id, product_id, price, discount_price, stock_quantity, expiry_date, is_available)
             VALUES ($1, $2, $3, $4, $5, $6, TRUE)
@@ -1035,29 +1068,29 @@ router.post('/', [verifyToken, isAdmin], async (req, res) => {
     } catch (err) {
         await query('ROLLBACK');
         console.error("Error creating product:", err);
-        
+
         // Handle duplicate barcode error
         if (err.code === '23505' && err.constraint === 'products_barcode_key') {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 error: 'الباركود موجود بالفعل',
                 errorCode: 'DUPLICATE_BARCODE',
                 barcode: barcode,
                 message: `المنتج بالباركود ${barcode} موجود بالفعل. يرجى استخدام باركود مختلف أو تعديل المنتج الموجود.`
             });
         }
-        
+
         res.status(400).json({ "error": err.message });
     }
 });
 
 // Update Product (Admin only)
 router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
-    const { 
+    const {
         name, category, subcategory, image, weight, description, barcode, isOrganic, isNew,
         price, originalPrice, branchId, stockQuantity, expiryDate, shelfLocation,
         frame_overlay_url, frame_enabled
     } = req.body;
-    
+
     try {
         await query('BEGIN');
 
@@ -1078,7 +1111,7 @@ router.put('/:id', [verifyToken, isAdmin], async (req, res) => {
             WHERE id = $13
             RETURNING *
         `;
-        
+
         const { rows } = await query(sql, [
             name, category, subcategory, image, weight, description, barcode,
             isOrganic, isNew, shelfLocation, frame_overlay_url, frame_enabled, req.params.id
@@ -1156,7 +1189,7 @@ router.get('/category/:category', async (req, res) => {
             )
         `;
         const { rows } = await query(sql, [branchId, category]);
-        
+
         res.json({ message: 'success', data: rows });
     } catch (err) {
         console.error("Error fetching products by category:", err);
@@ -1186,7 +1219,7 @@ router.get('/search', async (req, res) => {
             AND bp.is_available = TRUE
         `;
         const { rows } = await query(sql, [branchId, `%${q}%`]);
-        
+
         res.json({ message: 'success', data: rows });
     } catch (err) {
         console.error("Error searching products:", err);
@@ -1216,7 +1249,7 @@ router.post('/upload', [verifyToken, isAdmin, secureExcelUpload.single('file'), 
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
         const products = xlsx.utils.sheet_to_json(sheet);
-        
+
         // ✅ Security: Limit number of products in single upload
         if (products.length > 5000) {
             return res.status(400).json({ error: "Maximum 5000 products per upload" });

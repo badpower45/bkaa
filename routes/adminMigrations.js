@@ -22,11 +22,30 @@ const requireEnv = (name) => {
 };
 
 const isBase64Image = (value = '') => value.startsWith('data:image/');
+const isSafeIdentifier = (value = '') => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value);
 
 const getLimit = (value, fallback = 10, max = 50) => {
     const parsed = parseInt(value, 10);
     if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
     return Math.min(parsed, max);
+};
+
+const tableExists = async (tableName) => {
+    if (!isSafeIdentifier(tableName)) return false;
+    const { rows } = await query(
+        `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1 LIMIT 1`,
+        [tableName]
+    );
+    return rows.length > 0;
+};
+
+const columnExists = async (tableName, columnName) => {
+    if (!isSafeIdentifier(tableName) || !isSafeIdentifier(columnName)) return false;
+    const { rows } = await query(
+        `SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2 LIMIT 1`,
+        [tableName, columnName]
+    );
+    return rows.length > 0;
 };
 
 router.use((req, res, next) => {
@@ -128,6 +147,76 @@ router.post('/products-base64/run', async (req, res) => {
         });
     } catch (err) {
         console.error('Migration error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/storage-report', async (req, res) => {
+    try {
+        const topLimit = getLimit(req.query.limit, 10, 25);
+        const { rows: tableRows } = await query(
+            `
+            SELECT
+                relname AS table_name,
+                pg_total_relation_size(relid) AS size_bytes,
+                pg_size_pretty(pg_total_relation_size(relid)) AS size_pretty,
+                reltuples::bigint AS est_rows
+            FROM pg_catalog.pg_statio_user_tables
+            ORDER BY size_bytes DESC
+            LIMIT $1
+            `,
+            [topLimit]
+        );
+
+        const base64Targets = [
+            { table: 'products', columns: ['image'] },
+            { table: 'brands', columns: ['logo_url', 'banner_url', 'image', 'logo', 'banner'] },
+            { table: 'brand_offers', columns: ['image_url', 'brand_logo_url', 'image'] },
+            { table: 'hot_deals', columns: ['image'] },
+            { table: 'magazine_offers', columns: ['image'] },
+            { table: 'magazine_pages', columns: ['image_url'] },
+            { table: 'category_banners', columns: ['image_url', 'mobile_image_url'] },
+            { table: 'categories', columns: ['image', 'icon', 'banner_image'] },
+            { table: 'stories', columns: ['media_url'] },
+            { table: 'hero_sections', columns: ['image_url', 'mobile_image_url'] },
+            { table: 'home_sections', columns: ['banner_image'] },
+            { table: 'popups', columns: ['image_url'] },
+            { table: 'cta_banners', columns: ['image_url'] },
+            { table: 'facebook_reels', columns: ['thumbnail_url', 'video_url'] },
+            { table: 'notifications', columns: ['image_url'] }
+        ];
+
+        const base64Findings = [];
+        for (const target of base64Targets) {
+            if (!(await tableExists(target.table))) continue;
+            for (const column of target.columns) {
+                if (!(await columnExists(target.table, column))) continue;
+                if (!isSafeIdentifier(target.table) || !isSafeIdentifier(column)) continue;
+                const { rows } = await query(
+                    `SELECT COUNT(*) AS total, MAX(LENGTH("${column}")) AS max_length
+                     FROM "${target.table}"
+                     WHERE "${column}" LIKE 'data:%'`
+                );
+                const total = parseInt(rows[0]?.total || '0', 10);
+                const maxLength = parseInt(rows[0]?.max_length || '0', 10);
+                if (total > 0) {
+                    base64Findings.push({
+                        table: target.table,
+                        column,
+                        total,
+                        max_length: maxLength
+                    });
+                }
+            }
+        }
+
+        res.json({
+            checked_at: new Date().toISOString(),
+            tables: tableRows,
+            base64: base64Findings
+        });
+    } catch (err) {
+        console.error('Storage report error:', err);
         res.status(500).json({ error: err.message });
     }
 });
