@@ -82,7 +82,8 @@ router.get('/', async (req, res) => {
                         )
                         SELECT DISTINCT ON (p.id) 
                             p.id, p.name, p.category, p.image, p.rating, p.reviews,
-                            p.is_organic, p.is_new, p.description, p.weight, p.barcode,
+                            p.weight,
+                            p.frame_overlay_url, p.frame_enabled,
                             bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
                         FROM products p
                         LEFT JOIN branch_products bp ON p.id = bp.product_id

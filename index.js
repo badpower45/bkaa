@@ -61,6 +61,7 @@ import paymentRoutes from './routes/payment.js';
 import refundRoutes from './routes/refund.js';
 import popupsRoutes from './routes/popups.js';
 import categoryBannersRoutes from './routes/categoryBanners.js';
+import adminMigrationsRoutes from './routes/adminMigrations.js';
 
 // dotenv is loaded in database.js with the correct path
 // No need to load it again here
@@ -218,6 +219,7 @@ app.use('/api/brands', brandsRoutes);
 app.use('/api/returns', returnsLimiter, returnsRoutes);
 app.use('/api/returns-enhanced', returnsLimiter, returnsEnhancedRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/admin/migrations', adminMigrationsRoutes);
 app.use('/api/admin', adminAnalyticsRoutes);
 app.use('/api/admin-enhanced', adminEnhancedRoutes);
 app.use('/api/inventory', inventoryRoutes);

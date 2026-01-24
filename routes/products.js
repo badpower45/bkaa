@@ -760,14 +760,59 @@ router.get('/:id', async (req, res) => {
 
         if (branchId) {
             sql = `
-                SELECT p.*, bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
+                SELECT 
+                    p.id,
+                    p.name,
+                    p.name_ar,
+                    p.category,
+                    p.subcategory,
+                    p.image,
+                    p.weight,
+                    p.rating,
+                    p.reviews,
+                    p.is_organic,
+                    p.is_new,
+                    p.description,
+                    p.barcode,
+                    p.shelf_location,
+                    p.expiry_date,
+                    p.brand_id,
+                    p.frame_overlay_url,
+                    p.frame_enabled,
+                    bp.price,
+                    bp.discount_price,
+                    bp.stock_quantity,
+                    bp.is_available,
+                    bp.branch_id
                 FROM products p
                 LEFT JOIN branch_products bp ON p.id = bp.product_id AND bp.branch_id = $2
                 WHERE p.id = $1
             `;
             params = [id, branchId];
         } else {
-            sql = "SELECT * FROM products WHERE id = $1";
+            sql = `
+                SELECT 
+                    id,
+                    name,
+                    name_ar,
+                    category,
+                    subcategory,
+                    image,
+                    weight,
+                    rating,
+                    reviews,
+                    is_organic,
+                    is_new,
+                    description,
+                    barcode,
+                    shelf_location,
+                    expiry_date,
+                    brand_id,
+                    frame_overlay_url,
+                    frame_enabled
+                FROM products
+                WHERE id = $1
+            `;
             params = [id];
         }
 
@@ -794,12 +839,30 @@ router.get('/barcode/:barcode', async (req, res) => {
 
         // First try to get product with specified branch
         let sql = `
-            SELECT p.*, 
-                   bp.price, 
-                   bp.discount_price, 
-                   bp.stock_quantity, 
-                   bp.is_available,
-                   bp.branch_id
+            SELECT 
+                p.id,
+                p.name,
+                p.name_ar,
+                p.category,
+                p.subcategory,
+                p.image,
+                p.weight,
+                p.rating,
+                p.reviews,
+                p.is_organic,
+                p.is_new,
+                p.description,
+                p.barcode,
+                p.shelf_location,
+                p.expiry_date,
+                p.brand_id,
+                p.frame_overlay_url,
+                p.frame_enabled,
+                bp.price, 
+                bp.discount_price, 
+                bp.stock_quantity, 
+                bp.is_available,
+                bp.branch_id
             FROM products p
             LEFT JOIN branch_products bp ON p.id = bp.product_id AND bp.branch_id = $2
             WHERE p.barcode = $1
