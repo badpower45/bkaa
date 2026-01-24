@@ -5,6 +5,7 @@ const dotenv = require('dotenv');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
+const compression = require('compression');
 
 // Load environment variables
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -30,6 +31,9 @@ const allowedOrigins = [
 
 // Security: Trust proxy (for cPanel)
 app.set('trust proxy', 1);
+
+// Compress responses
+app.use(compression());
 
 // Security headers
 app.use(helmet({

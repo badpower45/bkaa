@@ -57,23 +57,27 @@ router.post('/dev/seed-sample', async (req, res) => {
 
 // Get all products (filtered by branch)
 router.get('/', async (req, res) => {
-    const { branchId, category, search, limit } = req.query;
+    const { branchId, category, search } = req.query;
+    const pageRaw = parseInt(req.query.page, 10);
+    const limitRaw = parseInt(req.query.limit, 10);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 20;
+    const offset = (page - 1) * limit;
 
     if (!branchId) {
         // Enforce branch selection as per requirements
         return res.json({
-            "message": "success",
-            "data": []
+            "data": [],
+            "page": page,
+            "total": 0
         });
     }
 
     try {
         // Add cache headers for better performance
         res.set('Cache-Control', 'public, max-age=60'); // Cache for 1 minute
-        
-        let sql = `
-            SELECT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews, p.is_organic, p.is_new, p.barcode,
-                   bp.price, bp.discount_price, bp.stock_quantity, bp.is_available
+
+        let whereSql = `
             FROM products p
             JOIN branch_products bp ON p.id = bp.product_id
             WHERE bp.branch_id = $1 AND bp.is_available = TRUE
@@ -82,36 +86,44 @@ router.get('/', async (req, res) => {
         let paramIndex = 2;
 
         if (category && category !== 'All') {
-            sql += ` AND p.category = $${paramIndex}`;
+            whereSql += ` AND p.category = $${paramIndex}`;
             params.push(category);
             paramIndex++;
         }
 
         if (search) {
-            sql += ` AND (p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`;
+            whereSql += ` AND (p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`;
             params.push(`%${search}%`);
             paramIndex++;
         }
-        
-        // Add ORDER BY for consistent results
-        sql += ` ORDER BY p.id`;
-        
-        // Add LIMIT for pagination
-        if (limit) {
-            sql += ` LIMIT $${paramIndex}`;
-            params.push(parseInt(limit));
-            paramIndex++;
-        }
 
-        const { rows } = await query(sql, params);
+        const listSql = `
+            SELECT p.id, p.name, p.category, p.image, p.weight, p.rating, p.reviews,
+                   bp.price, bp.discount_price, bp.stock_quantity
+            ${whereSql}
+            ORDER BY p.id
+            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        `;
 
-        // Convert is_organic/is_new back to boolean if needed (Postgres returns boolean for BOOLEAN columns usually, but let's be safe)
-        // Schema has is_organic BOOLEAN, is_new BOOLEAN. pg driver converts them to JS booleans automatically.
-        // However, the previous code mapped them manually. I will keep it clean.
+        const countSql = `
+            SELECT COUNT(*) AS total
+            ${whereSql}
+        `;
+
+        const listParams = [...params, limit, offset];
+        const countParams = [...params];
+
+        const [{ rows }, { rows: countRows }] = await Promise.all([
+            query(listSql, listParams),
+            query(countSql, countParams)
+        ]);
+
+        const total = parseInt(countRows[0]?.total || '0', 10);
 
         res.json({
-            "message": "success",
-            "data": rows
+            "data": rows,
+            "page": page,
+            "total": total
         });
     } catch (err) {
         console.error("Error fetching products:", err);
