@@ -7,8 +7,32 @@ const router = express.Router();
 // Get all active brand offers (public)
 router.get('/', async (req, res) => {
     try {
+        res.set('Cache-Control', 'public, max-age=60, s-maxage=120, stale-while-revalidate=600');
         const { rows } = await query(`
-            SELECT * FROM brand_offers 
+            SELECT 
+                id,
+                title,
+                title_ar,
+                subtitle,
+                subtitle_ar,
+                discount_text,
+                discount_text_ar,
+                background_type,
+                background_value,
+                text_color,
+                badge_color,
+                badge_text_color,
+                image_url,
+                brand_logo_url,
+                linked_product_id,
+                linked_brand_id,
+                link_type,
+                custom_link,
+                is_active,
+                display_order,
+                starts_at,
+                expires_at
+            FROM brand_offers 
             WHERE is_active = true 
             AND (starts_at IS NULL OR starts_at <= NOW())
             AND (expires_at IS NULL OR expires_at >= NOW())

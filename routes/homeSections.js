@@ -24,6 +24,7 @@ const normalizeCategoryValue = (value = '') =>
 // ============================================
 router.get('/', async (req, res) => {
     try {
+        res.set('Cache-Control', 'public, max-age=60, s-maxage=120, stale-while-revalidate=600');
         const branchId = req.query.branchId;
         const all = req.query.all === 'true';
         const pageValue = clampNumber(req.query.page, 1, 1000);

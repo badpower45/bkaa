@@ -7,8 +7,21 @@ const router = express.Router();
 // Get all active brands (public)
 router.get('/', async (req, res) => {
     try {
+        res.set('Cache-Control', 'public, max-age=120, s-maxage=300, stale-while-revalidate=900');
         const { rows } = await query(`
-            SELECT b.*, 
+            SELECT 
+                   b.id,
+                   b.name_ar,
+                   b.name_en,
+                   b.slogan_ar,
+                   b.slogan_en,
+                   b.logo_url,
+                   b.banner_url,
+                   b.primary_color,
+                   b.secondary_color,
+                   b.is_featured,
+                   b.display_order,
+                   b.current_offer_id,
                    COUNT(DISTINCT p.id) as products_count,
                    bo.title_ar as current_offer_title,
                    bo.discount_text_ar as current_offer_discount
@@ -29,8 +42,21 @@ router.get('/', async (req, res) => {
 // Get featured brands (public)
 router.get('/featured', async (req, res) => {
     try {
+        res.set('Cache-Control', 'public, max-age=120, s-maxage=300, stale-while-revalidate=900');
         const { rows } = await query(`
-            SELECT b.*, 
+            SELECT 
+                   b.id,
+                   b.name_ar,
+                   b.name_en,
+                   b.slogan_ar,
+                   b.slogan_en,
+                   b.logo_url,
+                   b.banner_url,
+                   b.primary_color,
+                   b.secondary_color,
+                   b.is_featured,
+                   b.display_order,
+                   b.current_offer_id,
                    COUNT(DISTINCT p.id) as products_count
             FROM brands b
             LEFT JOIN products p ON p.brand_id = b.id

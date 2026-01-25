@@ -7,9 +7,25 @@ const router = express.Router();
 // Get all hot deals (public)
 router.get('/', async (req, res) => {
     try {
+        res.set('Cache-Control', 'public, max-age=60, s-maxage=120, stale-while-revalidate=600');
         const { brandId } = req.query;
         let sql = `
-            SELECT hd.*, p.brand_id
+            SELECT 
+                hd.id,
+                hd.name,
+                hd.name_en,
+                hd.price,
+                hd.old_price,
+                hd.discount_percentage,
+                hd.image,
+                hd.total_quantity,
+                hd.sold_quantity,
+                hd.sold_percentage,
+                hd.end_time,
+                hd.is_flash_deal,
+                hd.product_id,
+                hd.branch_id,
+                p.brand_id
             FROM hot_deals hd
             LEFT JOIN products p ON hd.product_id = p.id
             WHERE hd.is_active = true 
@@ -45,8 +61,24 @@ router.get('/', async (req, res) => {
 // Get flash deal (the main featured deal)
 router.get('/flash', async (req, res) => {
     try {
+        res.set('Cache-Control', 'public, max-age=60, s-maxage=120, stale-while-revalidate=600');
         const { rows } = await query(`
-            SELECT * FROM hot_deals 
+            SELECT 
+                id,
+                name,
+                name_en,
+                price,
+                old_price,
+                discount_percentage,
+                image,
+                total_quantity,
+                sold_quantity,
+                sold_percentage,
+                end_time,
+                is_flash_deal,
+                product_id,
+                branch_id
+            FROM hot_deals 
             WHERE is_active = true 
             AND is_flash_deal = true
             AND end_time > NOW()

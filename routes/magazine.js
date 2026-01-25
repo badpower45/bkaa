@@ -7,10 +7,27 @@ const router = express.Router();
 // Get all magazine offers (public)
 router.get('/', async (req, res) => {
     try {
+        res.set('Cache-Control', 'public, max-age=60, s-maxage=120, stale-while-revalidate=600');
         const { category, brandId } = req.query;
         
         let sql = `
-            SELECT mo.*, p.brand_id
+            SELECT 
+                mo.id,
+                mo.name,
+                mo.name_en,
+                mo.price,
+                mo.old_price,
+                mo.unit,
+                mo.discount_percentage,
+                mo.image,
+                mo.category,
+                mo.bg_color,
+                mo.product_id,
+                mo.branch_id,
+                mo.start_date,
+                mo.end_date,
+                mo.sort_order,
+                p.brand_id
             FROM magazine_offers mo
             LEFT JOIN products p ON mo.product_id = p.id
             WHERE mo.is_active = true 

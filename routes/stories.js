@@ -70,9 +70,24 @@ router.get('/admin/list', async (req, res) => {
 // Get all active stories
 router.get('/', async (req, res) => {
     try {
+        res.set('Cache-Control', 'public, max-age=30, s-maxage=60, stale-while-revalidate=300');
         const result = await pool.query(`
             SELECT 
-                s.*,
+                s.id,
+                s.user_id,
+                s.circle_name,
+                s.title,
+                s.media_url,
+                s.media_type,
+                s.duration,
+                s.link_url,
+                s.link_text,
+                s.views_count,
+                s.is_active,
+                s.priority,
+                s.expires_at,
+                s.created_at,
+                s.branch_id,
                 u.name as user_name
             FROM stories s
             LEFT JOIN users u ON s.user_id = u.id

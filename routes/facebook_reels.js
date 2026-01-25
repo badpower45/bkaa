@@ -34,8 +34,19 @@ async function extractFacebookThumbnail(facebookUrl) {
 // Get all active reels (for frontend)
 router.get('/', async (req, res) => {
     try {
+        res.set('Cache-Control', 'public, max-age=60, s-maxage=180, stale-while-revalidate=600');
         const result = await pool.query(`
-            SELECT * FROM facebook_reels 
+            SELECT 
+                id,
+                title,
+                thumbnail_url,
+                video_url,
+                facebook_url,
+                views_count,
+                duration,
+                is_active,
+                display_order
+            FROM facebook_reels 
             WHERE is_active = true 
             ORDER BY display_order ASC, created_at DESC
         `);
